@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Electromagnetic Induction — Advanced Interactive Simulator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>⚡ Electromagnetic Induction Simulator</h1>
+      <p>Realistic Coil with Draggable Motion Control</p>
+      <button id="langToggle" class="lang-toggle">中文</button>
+    </div>
+
+    <div class="physics-principle" id="physicsPrinciple">
+      <strong>📚 Key Physics Principles:</strong><br>
+      <strong>Faraday's Law:</strong> Force only appears when magnetic flux through the coil <strong>changes</strong>. Inside a uniform field → constant flux → <strong>NO force</strong>.<br>
+      <strong>Lenz's Law:</strong> The induced current creates a magnetic field that <strong>opposes the change causing it</strong>. This is why the force always opposes the motion when entering or exiting the field.
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">
+          <span>🎯</span> Real-Time Visualization
+        </div>
+        <canvas id="viz" width="800" height="450"></canvas>
+
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-color" style="background: #6366f1;"></div>
+            <span>Coil Loops</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background: #ef4444;"></div>
+            <span>Magnetic Field</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background: #10b981;"></div>
+            <span>Opposing Force (Lenz's Law)</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background: #f59e0b;"></div>
+            <span>Induced Current</span>
+          </div>
+        </div>
+
+        <div id="status" class="status-box">
+          ⏸ Coil is <strong>completely outside</strong> field: <strong>NO flux change → NO force</strong>
+        </div>
+
+        <div class="graph-card">
+          <div class="graph-card-title">📊 Force vs Position</div>
+          <canvas id="graph" width="960" height="220"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>⚙️</span> Controls
+        </div>
+
+        <div class="controls">
+          <div class="control-group" id="areaGroup">
+            <div class="control-label">
+              <span>Coil Area</span>
+              <span class="control-value"><span id="areaVal">0.50</span> m²</span>
+            </div>
+            <input type="range" id="area" min="0.1" max="1.5" step="0.1" value="0.5">
+          </div>
+
+          <div class="control-group" id="turnsGroup">
+            <div class="control-label">
+              <span>Number of Turns</span>
+              <span class="control-value" id="turnsVal">8</span>
+            </div>
+            <input type="range" id="turns" min="1" max="10" step="1" value="8">
+          </div>
+
+          <div class="control-group">
+            <div class="control-label">
+              <span>Magnetic Field (B)</span>
+              <span class="control-value"><span id="fieldVal">1.0</span> T</span>
+            </div>
+            <input type="range" id="field" min="0.1" max="2" step="0.1" value="1">
+          </div>
+
+          <div class="control-group">
+            <div class="control-label">
+              <span>Resistance</span>
+              <span class="control-value"><span id="resVal">10</span> Ω</span>
+            </div>
+            <input type="range" id="res" min="1" max="100" step="1" value="10">
+          </div>
+
+          <div class="control-group">
+            <div class="control-label">
+              <span>Velocity</span>
+              <span class="control-value"><span id="velocityVal">2.0</span> m/s</span>
+            </div>
+            <input type="range" id="velocity" min="0.5" max="5.0" step="0.1" value="2.0">
+          </div>
+
+          <div class="button-group">
+            <button class="primary" id="autoMotion">▶ AUTO MOTION</button>
+            <button class="secondary" id="reset">↺ RESET</button>
+          </div>
+
+          <div class="button-group" style="margin-top: 12px;">
+            <button class="secondary" id="modeToggle" style="grid-column: 1 / -1;">🔄 Switch to Straight Conductor</button>
+          </div>
+
+          <div class="hint">
+            💡 <strong>Drag the coil</strong> along the canvas to move it manually. Watch how force appears only at field boundaries!
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">dΦ/dt</div>
+              <div class="stat-value" id="fluxRate">0.000 <span class="stat-unit">Wb/s</span></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Induced EMF</div>
+              <div class="stat-value" id="emf">0.000 <span class="stat-unit">V</span></div>
+            </div>
+            <div class="stat-card" id="currentCard">
+              <div class="stat-label">Current</div>
+              <div class="stat-value" id="I">0.0000 <span class="stat-unit">A</span></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Force</div>
+              <div class="stat-value" id="F">0.000 <span class="stat-unit">N</span></div>
+            </div>
+            <div class="stat-card" id="emfTopCard" style="display: none;">
+              <div class="stat-label">EMF (Top)</div>
+              <div class="stat-value" id="emfTop">0.000 <span class="stat-unit">V</span></div>
+            </div>
+            <div class="stat-card" id="emfBottomCard" style="display: none;">
+              <div class="stat-label">EMF (Bottom)</div>
+              <div class="stat-value" id="emfBottom">0.000 <span class="stat-unit">V</span></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
