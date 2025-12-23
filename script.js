@@ -522,6 +522,10 @@
         ctx.fillText(t.velocityLabel.replace('{value}', velocity.toFixed(1)), coilX + coilBaseWidth / 2 + 10 + arrowLength / 2, coilY - 15);
     }
 
+    // Determine direction based on flux change (Lenz's Law)
+    const fluxState = getFluxState(coilX);
+    const isExiting = fluxState.state === 'exiting';
+    
     // Induced current visualization (orange animated arrows)
     if (p.I > 0.0001) {
       const currentIntensity = Math.min(p.I * 2, 1);
