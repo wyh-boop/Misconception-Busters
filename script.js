@@ -522,19 +522,17 @@
         ctx.fillText(t.velocityLabel.replace('{value}', velocity.toFixed(1)), coilX + coilBaseWidth / 2 + 10 + arrowLength / 2, coilY - 15);
     }
 
-    // Induced current visualization (orange animated arrows) - visible even with few turns
+    // Induced current visualization (orange animated arrows)
     if (p.I > 0.0001) {
       const currentIntensity = Math.min(p.I * 2, 1);
       const spacing = 3;
-      
-      // Draw orange animated arrows on each loop - ensure visibility for all turn counts
-      ctx.strokeStyle = '#f59e0b'; // Orange color
+
+      ctx.strokeStyle = '#f59e0b';
       ctx.fillStyle = '#f59e0b';
-      ctx.lineWidth = 5; // Thicker for visibility
-      
-      // For few turns, draw multiple arrows per loop to make it more visible
-      const arrowsPerLoop = Math.max(1, Math.ceil(4 / Math.max(turns, 1))); // More arrows when fewer turns
-      
+      ctx.lineWidth = 5;
+
+      const arrowsPerLoop = Math.max(1, Math.ceil(4 / Math.max(turns, 1)));
+
       for (let i = 0; i < turns; i++) {
         const offset = i * spacing;
         const width = coilBaseWidth - offset * 2;
@@ -543,50 +541,72 @@
         const loopRight = coilX + width / 2;
         const loopTop = coilY - height / 2;
         const loopBottom = coilY + height / 2;
-        
-        // Perimeter of this loop
+
         const perimeter = 2 * (width + height);
-        
-        // Draw multiple arrows per loop for better visibility
+
         for (let arrowIdx = 0; arrowIdx < arrowsPerLoop; arrowIdx++) {
-          // Animate arrow position around the loop
           const phaseOffset = (arrowIdx * perimeter) / arrowsPerLoop;
-          const arrowOffset = (currentAnimationTime * 40 + i * (perimeter / turns) + phaseOffset) % perimeter;
-          
+          let rawArrowOffset = (currentAnimationTime * 40 + i * (perimeter / turns) + phaseOffset) % perimeter;
+
           let arrowX, arrowY, arrowAngle;
-          
-           // Calculate position on rectangular path (counter-clockwise: A→D→C→B→A)
-           if (arrowOffset < width) {
-             // Top edge (right to left) - A to D
-             arrowX = loopRight - arrowOffset;
-             arrowY = loopTop;
-             arrowAngle = Math.PI; // Left
-           } else if (arrowOffset < width + height) {
-             // Left edge (top to bottom) - D to C
-             arrowX = loopLeft;
-             arrowY = loopTop + (arrowOffset - width);
-             arrowAngle = Math.PI / 2; // Down
-           } else if (arrowOffset < 2 * width + height) {
-             // Bottom edge (left to right) - C to B
-             arrowX = loopLeft + (arrowOffset - width - height);
-             arrowY = loopBottom;
-             arrowAngle = 0; // Right
-           } else {
-             // Right edge (bottom to top) - B to A
-             arrowX = loopRight;
-             arrowY = loopBottom - (arrowOffset - 2 * width - height);
-             arrowAngle = -Math.PI / 2; // Up
-           }
-          
-          // Draw animated arrow - larger for better visibility
-          const arrowSize = Math.max(15, 18 * currentIntensity); // Minimum size for visibility
+          let isAnticlockwise = false; // Flag to determine arrow pointing direction
+
+          // Apply Lenz's Law to determine induced current direction.
+          // Coil moving right, B field into page.
+          // - ENTERING field: induced current is ANTI-CLOCKWISE.
+          // - EXITING field: induced current is CLOCKWISE.
+
+          // The default positioning logic below (before this if/else) for arrowAngle
+          // is set up to point correctly for a CLOCKWISE current.
+          // `rawArrowOffset` itself generates a progression that, when fed into the drawing logic below,
+          // results in a CLOCKWISE movement.
+
+          let currentMovementOffset = rawArrowOffset; // This will be used to place the arrow along the path.
+
+          if (fluxState.state === 'entering') {
+            // For ENTERING, we need ANTI-CLOCKWISE movement and pointing.
+            // Since `rawArrowOffset` naturally produces CLOCKWISE movement,
+            // we reverse the offset for movement, AND set the flag for pointing direction.
+            currentMovementOffset = perimeter - rawArrowOffset;
+            isAnticlockwise = true;
+          }
+          // For EXITING, we need CLOCKWISE movement and pointing.
+          // `rawArrowOffset` naturally produces CLOCKWISE movement, so no offset reversal is needed.
+          // `isAnticlockwise` remains false, meaning arrows will point in their default clockwise direction.
+
+
+          // Now calculate position and angle based on the `currentMovementOffset`
+          // and adjust `arrowAngle` based on `isAnticlockwise` flag.
+          if (currentMovementOffset < width) {
+            // Top edge (A to B)
+            arrowX = loopLeft + currentMovementOffset;
+            arrowY = loopTop;
+            arrowAngle = isAnticlockwise ? 0 : Math.PI; // Point Left for ACW, Right for CW
+          } else if (currentMovementOffset < width + height) {
+            // Right edge (B to C)
+            arrowX = loopRight;
+            arrowY = loopTop + (currentMovementOffset - width);
+            arrowAngle = isAnticlockwise ? Math.PI / 2 : -Math.PI / 2; // Point Up for ACW, Down for CW
+          } else if (currentMovementOffset < 2 * width + height) {
+            // Bottom edge (C to D)
+            arrowX = loopRight - (currentMovementOffset - width - height);
+            arrowY = loopBottom;
+            arrowAngle = isAnticlockwise ? Math.PI : 0; // Point Right for ACW, Left for CW
+          } else {
+            // Left edge (D to A)
+            arrowX = loopLeft;
+            arrowY = loopBottom - (currentMovementOffset - 2 * width - height);
+            arrowAngle = isAnticlockwise ? -Math.PI / 2 : Math.PI / 2; // Point Down for ACW, Up for CW
+          }
+
+          const arrowSize = Math.max(15, 18 * currentIntensity);
           ctx.save();
           ctx.translate(arrowX, arrowY);
           ctx.rotate(arrowAngle);
           ctx.beginPath();
           ctx.moveTo(0, 0);
-          ctx.lineTo(-arrowSize, -arrowSize / 2);
-          ctx.lineTo(-arrowSize, arrowSize / 2);
+          ctx.lineTo(arrowSize, -arrowSize / 2);
+          ctx.lineTo(arrowSize, arrowSize / 2);
           ctx.closePath();
           ctx.fill();
           ctx.restore();
