@@ -1,5 +1,6 @@
-// Optimized Electromagnetic Induction Simulator
+// Optimized Electromagnetic Induction Simulator with External Force
 // Performance improvements: dirty flags, circular buffer, throttling
+// CORRECTED VERSION - Fixed circular dependency and physics issues
 
 (function() {
   'use strict';
@@ -18,6 +19,10 @@
   const velocitySlider = document.getElementById('velocity');
   const autoMotionBtn = document.getElementById('autoMotion');
   const resetBtn = document.getElementById('reset');
+  
+  // NEW: External Force Slider
+  const externalForceSlider = document.getElementById('externalForce') || createExternalForceSlider();
+  const externalForceVal = document.getElementById('externalForceVal') || createExternalForceVal();
 
   const areaVal = document.getElementById('areaVal');
   const turnsVal = document.getElementById('turnsVal');
@@ -28,6 +33,56 @@
   const emfEl = document.getElementById('emf');
   const IEl = document.getElementById('I');
   const FEl = document.getElementById('F');
+  const externalForceEl = document.getElementById('externalForceDisplay') || createExternalForceDisplay();
+  const netForceEl = document.getElementById('netForce') || createNetForceDisplay();
+
+  // Helper function to create external force val span
+  function createExternalForceVal() {
+    const span = document.createElement('span');
+    span.id = 'externalForceVal';
+    span.textContent = '0.0';
+    return span;
+  }
+
+  // Helper function to create external force slider if not in HTML
+  function createExternalForceSlider() {
+    const container = document.querySelector('.control-group');
+    const div = document.createElement('div');
+    div.className = 'control-label';
+    div.innerHTML = `
+      <span>External Force</span>
+      <input type="range" id="externalForce" min="0" max="10" step="0.1" value="0">
+      <span id="externalForceVal">0.0</span>
+    `;
+    container?.appendChild(div);
+    return document.getElementById('externalForce');
+  }
+
+  // Helper function to create external force display
+  function createExternalForceDisplay() {
+    const container = document.querySelector('.stats-grid');
+    const div = document.createElement('div');
+    div.className = 'stat-card';
+    div.innerHTML = `
+      <div class="stat-label">External Force</div>
+      <div class="stat-value" id="externalForceDisplay">0.000 <span class="stat-unit">N</span></div>
+    `;
+    container?.appendChild(div);
+    return document.getElementById('externalForceDisplay');
+  }
+
+  // Helper function to create net force display
+  function createNetForceDisplay() {
+    const container = document.querySelector('.stats-grid');
+    const div = document.createElement('div');
+    div.className = 'stat-card';
+    div.innerHTML = `
+      <div class="stat-label">Net Force</div>
+      <div class="stat-value" id="netForce">0.000 <span class="stat-unit">N</span></div>
+    `;
+    container?.appendChild(div);
+    return document.getElementById('netForce');
+  }
 
   // State Variables
   let coilX = 80;
@@ -36,18 +91,27 @@
   let dragStartX = 0;
   let autoMotionActive = false;
   let lastCoilX = coilX;
-  let currentAnimationTime = 0; // For current animation
-  let currentLang = 'en'; // Language state
+  let currentAnimationTime = 0;
+  let currentLang = 'en';
+  
+  // CORRECTED: Velocity state (for acceleration/deceleration)
+  let currentVelocity = 0; // Actual velocity of the object
+  let acceleration = 0; // Current acceleration
+  const mass = 0.5; // Mass of coil/conductor for F = ma calculation
+  
+  // Canvas bounds
+  const CANVAS_MIN_X = 20;
+  let CANVAS_MAX_X = 0; // Will be set after canvas setup
   
   // High DPI support
   const devicePixelRatio = window.devicePixelRatio || 1;
   
-  // Language translations - defined early so it's available everywhere
+  // Language translations
   const translations = {
     en: {
       physicsPrinciple: '<strong>📚 Key Physics Principles:</strong><br><strong>Faraday\'s Law:</strong> Force only appears when magnetic flux through the coil <strong>changes</strong>. Inside a uniform field → constant flux → <strong>NO force</strong>.<br><strong>Lenz\'s Law:</strong> The induced current creates a magnetic field that <strong>opposes the change causing it</strong>. This is why the force always opposes the motion when entering or exiting the field.',
       headerTitle: '⚡ Electromagnetic Induction Simulator',
-      headerSubtitle: 'Realistic Coil with Draggable Motion Control',
+      headerSubtitle: 'Realistic Coil with Draggable Motion Control & External Force',
       visualization: 'Real-Time Visualization',
       coilLoops: 'Coil Loops',
       magneticField: 'Magnetic Field',
@@ -59,6 +123,7 @@
       magneticFieldB: 'Magnetic Field (B)',
       resistance: 'Resistance',
       velocity: 'Velocity',
+      externalForce: 'External Force',
       autoMotion: '▶ AUTO MOTION',
       pause: '⏸ PAUSE',
       reset: '↺ RESET',
@@ -68,7 +133,9 @@
       fluxRate: 'dΦ/dt',
       inducedEMF: 'Induced EMF',
       current: 'Current',
-      force: 'Force',
+      force: 'Lenz Force',
+      externalForceLabel: 'External Force',
+      netForceLabel: 'Net Force',
       emfTop: 'EMF (Top)',
       emfBottom: 'EMF (Bottom)',
       graphTitle: '📊 Force vs Position',
@@ -82,12 +149,15 @@
       forceLabel: 'F (Lenz)',
       velocityLabel: 'v={value} m/s',
       graphXAxis: 'Position (px)',
-      graphYAxis: 'Force (N)'
+      graphYAxis: 'Force (N)',
+      motionSlowing: '🔴 Slowing down (F_Lenz > F_external)',
+      motionConstant: '🟡 Constant velocity (F_Lenz ≈ F_external)',
+      motionAccelerating: '🟢 Accelerating (F_external > F_Lenz)'
     },
     zh: {
       physicsPrinciple: '<strong>📚 關鍵物理原理：</strong><br><strong>法拉第定律：</strong>只有當通過線圈的磁通量<strong>改變</strong>時才會產生力。在均勻磁場內 → 磁通量恆定 → <strong>無力</strong>。<br><strong>楞次定律：</strong>感生電流（或電動勢）<strong>總是與產生它的變化抗衡，或傾向與這個變化抗衡。</strong>。這就是為什麼進入或離開磁場時，力總是與運動方向相反。',
       headerTitle: '⚡ 電磁感應模擬器',
-      headerSubtitle: '可拖動線圈的真實模擬',
+      headerSubtitle: '可拖動線圈的真實模擬及外力',
       visualization: '即時視覺化',
       coilLoops: '線圈迴路',
       magneticField: '磁場',
@@ -99,6 +169,7 @@
       magneticFieldB: '磁場 (B)',
       resistance: '電阻',
       velocity: '速度',
+      externalForce: '外部力',
       autoMotion: '▶ 自動運動',
       pause: '⏸ 暫停',
       reset: '↺ 重置',
@@ -108,7 +179,9 @@
       fluxRate: 'dΦ/dt',
       inducedEMF: '感應電動勢',
       current: '電流',
-      force: '力',
+      force: '楞次力',
+      externalForceLabel: '外部力',
+      netForceLabel: '合力',
       emfTop: '電動勢（上）',
       emfBottom: '電動勢（下）',
       graphTitle: '📊 力 vs 位置',
@@ -122,13 +195,15 @@
       forceLabel: 'F（楞次）',
       velocityLabel: 'v={value} 米/秒',
       graphXAxis: '位置（像素）',
-      graphYAxis: '力（牛頓）'
+      graphYAxis: '力（牛頓）',
+      motionSlowing: '🔴 減速中 (F_楞次 > F_外部)',
+      motionConstant: '🟡 勻速 (F_楞次 ≈ F_外部)',
+      motionAccelerating: '🟢 加速中 (F_外部 > F_楞次)'
     }
   };
   
-  // Setup canvas for high DPI - use HTML attributes as base, not CSS size
+  // Setup canvas for high DPI
   function setupCanvas() {
-    // Use the HTML width/height attributes as the base size
     const baseWidth = parseInt(canvas.getAttribute('width')) || 1000;
     const baseHeight = parseInt(canvas.getAttribute('height')) || 550;
     
@@ -137,6 +212,9 @@
     ctx.scale(devicePixelRatio, devicePixelRatio);
     canvas.style.width = baseWidth + 'px';
     canvas.style.height = baseHeight + 'px';
+    
+    // Set max X position based on canvas width
+    CANVAS_MAX_X = baseWidth - 20;
     
     const graphRect = graphCanvas.getBoundingClientRect();
     graphCanvas.width = graphRect.width * devicePixelRatio;
@@ -148,21 +226,19 @@
   
   setupCanvas();
   
-  const fieldX = 500;
+  const fieldX = 300;
   const fieldWidth = 220;
   const fieldX_end = fieldX + fieldWidth;
 
-  let coilWidth = 80; // Will be calculated from area
+  let coilWidth = 80;
   const coilHeight = 120;
   
-  // Mode: 'coil' or 'conductor'
   let mode = 'coil';
   const modeToggleBtn = document.getElementById('modeToggle');
 
-  // Performance optimizations
   const maxDataPoints = 100;
   
-  // Circular buffer for history (O(1) instead of O(n) with shift())
+  // Circular buffer for history
   class CircularBuffer {
     constructor(size) {
       this.size = size;
@@ -193,12 +269,10 @@
   const positionHistory = new CircularBuffer(maxDataPoints);
   const forceHistory = new CircularBuffer(maxDataPoints);
 
-  // Dirty flags for conditional rendering
   let needsRedraw = true;
   let needsGraphRedraw = true;
   let lastPhysicsState = null;
 
-  // Throttle function for slider updates
   function throttle(func, wait) {
     let timeout;
     return function executedFunction(...args) {
@@ -211,62 +285,51 @@
     };
   }
 
-  // Calculate coil dimensions from area
   function updateCoilDimensions() {
     const area = parseFloat(areaSlider.value);
-    // Calculate width from area (assuming height is fixed proportionally)
-    // Area = width * height, so width = area / (height/scale)
-    const scale = 1.5; // Scale factor for visualization
-    const calculatedWidth = Math.sqrt(area * scale) * 60; // Convert to pixels
-    
-    // Limit coil width to not exceed field width
+    const scale = 1.5;
+    const calculatedWidth = Math.sqrt(area * scale) * 60;
     coilWidth = Math.min(calculatedWidth, fieldWidth * 0.9);
   }
   
-  // Physics Functions
+  // CORRECTED: Physics Functions - Use slider velocity, not currentVelocity
   function getFluxState(x) {
     if (mode === 'conductor') {
-      // For conductor mode, use conductor dimensions
       const conductorWidth = 25;
       const left = x - conductorWidth / 2;
       const right = x + conductorWidth / 2;
       
-      // Completely outside field - no force
       if (right <= fieldX) {
         return { state: 'outside', fluxChangeRate: 0 };
       } else if (left >= fieldX_end) {
         return { state: 'outside', fluxChangeRate: 0 };
       }
       
-      // Fully inside field - no flux change, no force
       if (left >= fieldX && right <= fieldX_end) {
         return { state: 'inside', fluxChangeRate: 0 };
       }
       
-      // Entering field (left edge is outside, right edge is inside)
+      // CORRECTED: Use slider velocity for physics calculation
+      const velocity = currentVelocity;
+      
       if (left < fieldX && right > fieldX && right <= fieldX_end) {
-        const velocity = parseFloat(velocitySlider.value);
         const B = parseFloat(fieldSlider.value);
-        const overlapLength = right - fieldX; // Length of conductor inside field
-        const fluxChangeRate = B * velocity * overlapLength * 0.1; // Flux change rate
+        const overlapLength = right - fieldX;
+        const fluxChangeRate = B * velocity * overlapLength * 0.1;
         return { state: 'entering', fluxChangeRate };
       }
       
-      // Exiting field (left edge is inside, right edge is outside)
       if (left >= fieldX && left < fieldX_end && right > fieldX_end) {
-        const velocity = parseFloat(velocitySlider.value);
         const B = parseFloat(fieldSlider.value);
-        const overlapLength = fieldX_end - left; // Length of conductor still in field
-        const fluxChangeRate = -B * velocity * overlapLength * 0.1; // Negative for exiting
+        const overlapLength = fieldX_end - left;
+        const fluxChangeRate = -B * velocity * overlapLength * 0.1;
         return { state: 'exiting', fluxChangeRate };
       }
       
-      // Default to outside if somehow none of the above match
       return { state: 'outside', fluxChangeRate: 0 };
     }
     
-    // For coil mode, use coil dimensions
-    updateCoilDimensions(); // Update dimensions based on area
+    updateCoilDimensions();
     const left = x - coilWidth / 2;
     const right = x + coilWidth / 2;
 
@@ -281,9 +344,8 @@
     const B = parseFloat(fieldSlider.value);
     const N = parseInt(turnsSlider.value);
     const A = parseFloat(areaSlider.value);
-    const velocity = parseFloat(velocitySlider.value);
-    // Convert velocity from m/s to pixels per frame (assuming ~60fps)
-    const velocityPxPerFrame = velocity * 0.1; // Scale factor for visualization
+    // CORRECTED: Use slider velocity for physics calculation
+    const velocity = currentVelocity;
     const fluxChangeRate = N * B * A * velocity * 0.1;
 
     if (right >= fieldX && right <= fieldX_end && left < fieldX) {
@@ -295,29 +357,76 @@
     return { state: 'outside', fluxChangeRate: 0 };
   }
 
+  // CORRECTED: Force calculation with proper direction handling
   function computePhysics() {
+    // ✓ NEW: Define epsilon threshold for floating-point noise  
+    const EPS = 0.015;  // Threshold: catch all residual velocities below 0.015 m/s  
     const B = parseFloat(fieldSlider.value);
     const R = parseInt(resSlider.value);
+    const externalForce = parseFloat(externalForceSlider.value);
 
     const fluxState = getFluxState(coilX);
+  
+    // ✓ NEW: STRICT ZERO ENFORCEMENT - If velocity is near zero, all induced quantities are zero
+    if (Math.abs(currentVelocity) <= EPS) {
+      return { 
+        dPhiDt: 0, 
+        emf: 0, 
+        I: 0, 
+        lenzForce: 0,
+        externalForce,
+        netForce: externalForce,  // Only external force acts when v ≈ 0
+        acceleration: externalForce / mass,
+        state: fluxState.state 
+      };
+    }
+    
     const dPhiDt = fluxState.fluxChangeRate;
     const emf = dPhiDt;
-    const I = emf / R;
+    const I = emf / R;  
     
-    let F = 0;
-    if (mode === 'conductor') {
-      // For conductor, force is proportional to current and field
-      // Force exists when there's flux change (entering or exiting)
-      F = Math.abs(dPhiDt) > 0.001 ? (B * Math.abs(I) * 0.1) : 0;
-    } else {
-      // For coil, use original formula
-      const N = parseInt(turnsSlider.value);
-      const A = parseFloat(areaSlider.value);
-      // Force exists when there's flux change (entering or exiting)
-      F = Math.abs(dPhiDt) > 0.001 ? (N * B * A * Math.abs(I)) : 0;
-    }
+    // CORRECTED: Use same velocity threshold as EMF calculation
+    // Force should be zero when velocity is negligible
+    let lenzForce = 0;
 
-    return { dPhiDt, emf, I, F, state: fluxState.state };
+    // Only calculate Lenz force if velocity is significant AND current is significant
+    // Use SAME threshold as induced current display (0.0001)
+    if (Math.abs(currentVelocity) > 0.01 && Math.abs(I) > 0.0001) {
+      if (mode === 'conductor') {
+        lenzForce = (B * Math.abs(I) * 0.1);
+      } else {
+        const N = parseInt(turnsSlider.value);
+        const A = parseFloat(areaSlider.value);
+        lenzForce = (N * B * A * Math.abs(I));
+      }
+    } else {
+      lenzForce = 0;
+    }    
+
+    // CORRECTED: Lenz force always opposes motion direction
+    const lenzForceMagnitude = lenzForce;
+    const velocityDirection = currentVelocity >= 0 ? 1 : -1;
+    const lenzForceVector = -lenzForceMagnitude * velocityDirection; // Opposes motion
+    
+    // Net force calculation (external force to right, Lenz force opposes)
+    const netForce = externalForce + lenzForceVector;
+    
+    // Acceleration: a = F_net / m
+    acceleration = netForce / mass;
+    
+    // ✓ NEW: Clamp all near-zero values to exact zero to prevent floating-point noise
+    const clampValue = (v) => Math.abs(v) < EPS ? 0 : v;
+
+    return { 
+      dPhiDt: clampValue(dPhiDt), 
+      emf: clampValue(emf), 
+      I: clampValue(I), 
+      lenzForce: clampValue(lenzForceMagnitude),
+      externalForce,
+      netForce: clampValue(netForce),
+      acceleration: clampValue(acceleration),
+      state: fluxState.state 
+    };
   }
 
   function updateStatusMessage(physics) {
@@ -329,26 +438,50 @@
       'entering': t.statusEntering.replace('{object}', objectName),
       'exiting': t.statusExiting.replace('{object}', objectName)
     };
+    
     statusEl.innerHTML = messages[physics.state] || '';
-    statusEl.className = (physics.F > 0.001) ? 'status-box active' : 'status-box';
+    
+    // Add motion status based on force balance
+    let motionStatus = '';
+    const tolerance = 0.1; // Tolerance for "equal" forces
+    
+    if (physics.lenzForce > physics.externalForce + tolerance && currentVelocity > 0) {
+      motionStatus = t.motionSlowing;
+    } else if (Math.abs(physics.lenzForce - physics.externalForce) <= tolerance && currentVelocity > 0.01) {
+      motionStatus = t.motionConstant;
+    } else if (physics.externalForce > physics.lenzForce + tolerance) {
+      motionStatus = t.motionAccelerating;
+    }
+    
+    if (motionStatus) {
+      statusEl.innerHTML += '<br>' + motionStatus;
+    }
+    
+    statusEl.className = (physics.lenzForce > 0.001) ? 'status-box active' : 'status-box';
   }
 
   function updateDisplays() {
     const p = computePhysics();
     
-    // Only update if values changed significantly
-    const stateChanged = !lastPhysicsState || 
+    // ✓ DEBUG: Log velocity and current to browser console
+    console.log('currentVelocity:', currentVelocity, 'I:', p.I);
+    
+    const stateChanged = !lastPhysicsState ||
+
       Math.abs(p.dPhiDt - lastPhysicsState.dPhiDt) > 0.001 ||
-      Math.abs(p.F - lastPhysicsState.F) > 0.001 ||
+      Math.abs(p.lenzForce - lastPhysicsState.lenzForce) > 0.001 ||
+      Math.abs(p.externalForce - lastPhysicsState.externalForce) > 0.001 ||
       p.state !== lastPhysicsState.state;
 
     if (stateChanged) {
       fluxRateEl.innerHTML = p.dPhiDt.toFixed(3) + '<span class="stat-unit"> Wb/s</span>';
       emfEl.innerHTML = p.emf.toFixed(3) + '<span class="stat-unit"> V</span>';
       IEl.innerHTML = p.I.toFixed(4) + '<span class="stat-unit"> A</span>';
-      FEl.innerHTML = p.F.toFixed(3) + '<span class="stat-unit"> N</span>';
+      FEl.innerHTML = p.lenzForce.toFixed(3) + '<span class="stat-unit"> N</span>';
+      externalForceEl.innerHTML = p.externalForce.toFixed(3) + '<span class="stat-unit"> N</span>';
+      netForceEl.innerHTML = p.netForce.toFixed(3) + '<span class="stat-unit"> N</span>';
 
-      if (p.F < 0.001) {
+      if (p.lenzForce < 0.001) {
         FEl.parentElement.classList.add('zero');
       } else {
         FEl.parentElement.classList.remove('zero');
@@ -358,13 +491,55 @@
       lastPhysicsState = p;
     }
 
-    // Update history only if position changed
     if (Math.abs(coilX - lastCoilX) > 0.5) {
       positionHistory.push(coilX);
-      forceHistory.push(p.F);
+      forceHistory.push(p.lenzForce);
       lastCoilX = coilX;
       needsGraphRedraw = true;
     }
+  }
+
+  // CORRECTED: Update velocity based on acceleration (only during auto motion)
+  function updateVelocity(deltaTime) {
+    const p = computePhysics();
+    
+    // Update velocity: v = v0 + a*t
+    currentVelocity += p.acceleration * deltaTime;
+
+    // ✓ NEW: Clamp velocity to exact zero if it's very small  
+    const velocityEPS = 0.02;  // Threshold for velocity  
+    if (Math.abs(currentVelocity) < velocityEPS) {  
+      currentVelocity = 0;  
+    }  
+    
+    // Prevent velocity from becoming negative (object stops)  
+    if (currentVelocity < 0) {  
+      currentVelocity = 0;  
+    }  
+    
+    // Prevent velocity from becoming negative (object stops)
+    if (currentVelocity < 0) {
+      currentVelocity = 0;
+    }
+    
+    // Update position based on actual velocity
+    coilX += currentVelocity * deltaTime * 100; // Scale factor for visualization
+    
+    // Boundary checking - prevent coil from leaving canvas and stop if it hits edge
+    const prevCoilX = coilX;
+    coilX = Math.max(CANVAS_MIN_X, Math.min(CANVAS_MAX_X, coilX));
+    
+    // If coil hit the boundary, stop it completely
+    if (coilX !== prevCoilX && (coilX === CANVAS_MIN_X || coilX === CANVAS_MAX_X)) {
+      currentVelocity = 0;
+      autoMotionActive = false;
+      const t = translations[currentLang] || translations.en;
+      autoMotionBtn.textContent = t.autoMotion;
+    }
+    
+    // Update slider to reflect new velocity
+    velocitySlider.value = currentVelocity.toFixed(1);
+    velocityVal.textContent = currentVelocity.toFixed(1);    
   }
 
   // Drawing Functions
@@ -383,27 +558,22 @@
 
     const centerY = canvasHeight / 2;
 
-    // Field region - ensure it's fully visible with strong contrast
-    // Make field extend fully across canvas height
-    const fieldTop = 20; // Start near top of canvas
-    const fieldBottom = canvasHeight - 20; // End near bottom of canvas
+    const fieldTop = 20;
+    const fieldBottom = canvasHeight - 20;
     const fieldHeight = fieldBottom - fieldTop;
     
-    // Stronger background fill for visibility
     ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
     ctx.fillRect(fieldX, fieldTop, fieldWidth, fieldHeight);
     ctx.strokeStyle = '#dc2626';
     ctx.lineWidth = 6;
     ctx.strokeRect(fieldX, fieldTop, fieldWidth, fieldHeight);
 
-    // Magnetic field direction indicators (X for into page) - spaced out like photo 3
     ctx.strokeStyle = '#dc2626';
     ctx.fillStyle = '#dc2626';
     ctx.lineWidth = 4;
     
-    // Draw X symbols (into page) in a spaced grid pattern - smaller and more spaced
-    const gridRows = Math.floor(fieldHeight / 60); // More spacing between rows
-    const gridCols = 6; // Fewer columns for more spacing
+    const gridRows = Math.floor(fieldHeight / 60);
+    const gridCols = 6;
     const cellWidth = fieldWidth / gridCols;
     const cellHeight = fieldHeight / gridRows;
     
@@ -412,7 +582,6 @@
         const x = fieldX + col * cellWidth + cellWidth / 2;
         const y = fieldTop + row * cellHeight + cellHeight / 2;
         
-        // Draw X (cross) for field into page - smaller size
         ctx.beginPath();
         ctx.moveTo(x - 10, y - 10);
         ctx.lineTo(x + 10, y + 10);
@@ -422,12 +591,10 @@
       }
     }
 
-    // Field label - positioned inside field at top with better visibility
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 16px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    // Add background for better text visibility
     const t = translations[currentLang] || translations.en;
     const labelText = t.magneticFieldLabel;
     const labelMetrics = ctx.measureText(labelText);
@@ -438,17 +605,15 @@
     ctx.fillStyle = '#ffffff';
     ctx.fillText(labelText, labelX, labelY);
 
-    // Draw coil as concentric/stacked loops (spiral pattern)
     const turns = parseInt(turnsSlider.value);
     const baseWidth = coilWidth;
     const baseHeight = coilHeight;
-    const spacing = 3; // Spacing between loops
+    const spacing = 3;
     
     ctx.strokeStyle = '#6366f1';
     ctx.lineWidth = 2.5;
     ctx.fillStyle = 'rgba(99, 102, 241, 0.1)';
 
-    // Draw each turn as a concentric rectangular loop
     for (let i = 0; i < turns; i++) {
       const offset = i * spacing;
       const width = baseWidth - offset * 2;
@@ -456,29 +621,24 @@
       const x = coilX - width / 2;
       const y = coilY - height / 2;
       
-      // Draw rectangular loop
       ctx.beginPath();
       ctx.rect(x, y, width, height);
       ctx.stroke();
       
-      // Light fill for depth
       if (i < turns - 1) {
         ctx.fillRect(x, y, width, height);
       }
     }
 
-    // Coil outline (dashed) - outer boundary
     ctx.strokeStyle = '#4f46e5';
     ctx.lineWidth = 2;
     ctx.setLineDash([8, 4]);
     ctx.strokeRect(coilX - baseWidth / 2, coilY - baseHeight / 2, baseWidth, baseHeight);
     ctx.setLineDash([]);
     
-    // Store baseWidth and baseHeight for use in current visualization
     const coilBaseWidth = baseWidth;
     const coilBaseHeight = baseHeight;
 
-    // Corner labels (A, B, C, D) with italic font
     ctx.fillStyle = '#6366f1';
     ctx.font = 'italic bold 14px Arial';
     ctx.textAlign = 'center';
@@ -489,45 +649,67 @@
     ctx.fillText('C', coilX + coilWidth / 2 + cornerOffset, coilY + coilHeight / 2 + cornerOffset);
     ctx.fillText('D', coilX - coilWidth / 2 - cornerOffset, coilY + coilHeight / 2 + cornerOffset);
 
-    // Coil label
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(`N=${turns}`, coilX, coilY + coilHeight / 2 + 25);
 
     const p = computePhysics();
 
-      // Velocity arrow (always show when moving, or when auto motion is active)
-      const velocity = parseFloat(velocitySlider.value);
-      if (autoMotionActive || Math.abs(coilX - lastCoilX) > 0.1) {
-        ctx.strokeStyle = '#10b981';
-        ctx.lineWidth = 3;
-        const arrowLength = 30 + velocity * 10;
-        ctx.beginPath();
-        ctx.moveTo(coilX + coilBaseWidth / 2 + 10, coilY);
-        ctx.lineTo(coilX + coilBaseWidth / 2 + 10 + arrowLength, coilY);
-        ctx.stroke();
+    // Velocity arrow - only show if velocity > 0  
+    if (currentVelocity > 0.01 && (autoMotionActive || Math.abs(coilX - lastCoilX) > 0.1)) {
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 3;
+      const arrowLength = 30 + currentVelocity * 10;
+      ctx.beginPath();
+      ctx.moveTo(coilX + coilBaseWidth / 2 + 10, coilY);
+      ctx.lineTo(coilX + coilBaseWidth / 2 + 10 + arrowLength, coilY);
+      ctx.stroke();
 
-        ctx.fillStyle = '#10b981';
-        ctx.beginPath();
-        ctx.moveTo(coilX + coilBaseWidth / 2 + 10 + arrowLength, coilY);
-        ctx.lineTo(coilX + coilBaseWidth / 2 + 10 + arrowLength - 8, coilY - 5);
-        ctx.lineTo(coilX + coilBaseWidth / 2 + 10 + arrowLength - 8, coilY + 5);
-        ctx.closePath();
-        ctx.fill();
-        
-        // Velocity label
-        const t = translations[currentLang] || translations.en;
-        ctx.fillStyle = '#10b981';
-        ctx.font = 'bold 11px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(t.velocityLabel.replace('{value}', velocity.toFixed(1)), coilX + coilBaseWidth / 2 + 10 + arrowLength / 2, coilY - 15);
+      ctx.fillStyle = '#10b981';
+      ctx.beginPath();
+      ctx.moveTo(coilX + coilBaseWidth / 2 + 10 + arrowLength, coilY);
+      ctx.lineTo(coilX + coilBaseWidth / 2 + 10 + arrowLength - 8, coilY - 5);
+      ctx.lineTo(coilX + coilBaseWidth / 2 + 10 + arrowLength - 8, coilY + 5);
+      ctx.closePath();
+      ctx.fill();
+      
+      ctx.fillStyle = '#10b981';
+      ctx.font = 'bold 11px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(t.velocityLabel.replace('{value}', currentVelocity.toFixed(1)), coilX + coilBaseWidth / 2 + 10 + arrowLength / 2, coilY - 15);
     }
 
-    // Determine direction based on flux change (Lenz's Law)
+    // External Force arrow (pointing right)
+    const externalForce = parseFloat(externalForceSlider.value);
+    if (externalForce > 0.001) {
+      const forceScale = Math.max(externalForce * 50, 20);
+      const arrowEndX = coilX + coilBaseWidth / 2 + 10 + forceScale;
+      
+      ctx.strokeStyle = '#48c6ec';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(coilX + coilBaseWidth / 2 + 10, coilY + 30);
+      ctx.lineTo(arrowEndX, coilY + 30);
+      ctx.stroke();
+
+      ctx.fillStyle = '#48c6ec';
+      ctx.beginPath();
+      ctx.moveTo(arrowEndX, coilY + 30);
+      ctx.lineTo(arrowEndX - 12, coilY + 30 - 8);
+      ctx.lineTo(arrowEndX - 12, coilY + 30 + 8);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#48c6ec';
+      ctx.font = 'bold 12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(t.externalForceLabel + ': ' + externalForce.toFixed(2) + 'N', (coilX + coilBaseWidth / 2 + 10 + arrowEndX) / 2, coilY + 50);
+    }
+
+    // Get flux state for current animation
     const fluxState = getFluxState(coilX);
-    const isExiting = fluxState.state === 'exiting';
-    
+
     // Induced current visualization (orange animated arrows)
-    if (p.I > 0.0001) {
+    if (p.I > 0) {
       const currentIntensity = Math.min(p.I * 2, 1);
       const spacing = 3;
 
@@ -553,54 +735,31 @@
           let rawArrowOffset = (currentAnimationTime * 40 + i * (perimeter / turns) + phaseOffset) % perimeter;
 
           let arrowX, arrowY, arrowAngle;
-          let isAnticlockwise = false; // Flag to determine arrow pointing direction
+          let isAnticlockwise = false;
 
-          // Apply Lenz's Law to determine induced current direction.
-          // Coil moving right, B field into page.
-          // - ENTERING field: induced current is ANTI-CLOCKWISE.
-          // - EXITING field: induced current is CLOCKWISE.
-
-          // The default positioning logic below (before this if/else) for arrowAngle
-          // is set up to point correctly for a CLOCKWISE current.
-          // `rawArrowOffset` itself generates a progression that, when fed into the drawing logic below,
-          // results in a CLOCKWISE movement.
-
-          let currentMovementOffset = rawArrowOffset; // This will be used to place the arrow along the path.
+          let currentMovementOffset = rawArrowOffset;
 
           if (fluxState.state === 'entering') {
-            // For ENTERING, we need ANTI-CLOCKWISE movement and pointing.
-            // Since `rawArrowOffset` naturally produces CLOCKWISE movement,
-            // we reverse the offset for movement, AND set the flag for pointing direction.
             currentMovementOffset = perimeter - rawArrowOffset;
             isAnticlockwise = true;
           }
-          // For EXITING, we need CLOCKWISE movement and pointing.
-          // `rawArrowOffset` naturally produces CLOCKWISE movement, so no offset reversal is needed.
-          // `isAnticlockwise` remains false, meaning arrows will point in their default clockwise direction.
 
-
-          // Now calculate position and angle based on the `currentMovementOffset`
-          // and adjust `arrowAngle` based on `isAnticlockwise` flag.
           if (currentMovementOffset < width) {
-            // Top edge (A to B)
             arrowX = loopLeft + currentMovementOffset;
             arrowY = loopTop;
-            arrowAngle = isAnticlockwise ? 0 : Math.PI; // Point Left for ACW, Right for CW
+            arrowAngle = isAnticlockwise ? 0 : Math.PI;
           } else if (currentMovementOffset < width + height) {
-            // Right edge (B to C)
             arrowX = loopRight;
             arrowY = loopTop + (currentMovementOffset - width);
-            arrowAngle = isAnticlockwise ? Math.PI / 2 : -Math.PI / 2; // Point Up for ACW, Down for CW
+            arrowAngle = isAnticlockwise ? Math.PI / 2 : -Math.PI / 2;
           } else if (currentMovementOffset < 2 * width + height) {
-            // Bottom edge (C to D)
             arrowX = loopRight - (currentMovementOffset - width - height);
             arrowY = loopBottom;
-            arrowAngle = isAnticlockwise ? Math.PI : 0; // Point Right for ACW, Left for CW
+            arrowAngle = isAnticlockwise ? Math.PI : 0;
           } else {
-            // Left edge (D to A)
             arrowX = loopLeft;
             arrowY = loopBottom - (currentMovementOffset - 2 * width - height);
-            arrowAngle = isAnticlockwise ? -Math.PI / 2 : Math.PI / 2; // Point Down for ACW, Up for CW
+            arrowAngle = isAnticlockwise ? -Math.PI / 2 : Math.PI / 2;
           }
 
           const arrowSize = Math.max(15, 18 * currentIntensity);
@@ -618,26 +777,22 @@
       }
     }
 
-    // Force - make it more visible even when small
-    // Direction: always points LEFT (opposes rightward motion, whether entering or exiting)
-    if (p.F > 0.0001) {
-      // Minimum visible scale to ensure it's always noticeable
-      const minScale = 30; // Minimum arrow length
-      const forceScale = Math.max(p.F * 2, 0.1); // Scale factor
+    // Lenz Force arrow (pointing left, opposes motion)
+    if (p.lenzForce > 0.0001) {
+      const minScale = 30;
+      const forceScale = Math.max(p.lenzForce * 2, 0.1);
       const scale = Math.max(minScale, Math.min(forceScale * 50, 80));
       
-      // Force always opposes motion (rightward), so always points left
       const arrowStartX = coilX - coilBaseWidth / 2 - 15;
       const arrowEndX = arrowStartX - scale;
       
       ctx.strokeStyle = '#10b981';
-      ctx.lineWidth = 6; // Thicker line
+      ctx.lineWidth = 6;
       ctx.beginPath();
       ctx.moveTo(arrowStartX, coilY);
       ctx.lineTo(arrowEndX, coilY);
       ctx.stroke();
 
-      // Larger arrowhead pointing left
       ctx.fillStyle = '#10b981';
       ctx.beginPath();
       ctx.moveTo(arrowEndX, coilY);
@@ -646,8 +801,6 @@
       ctx.closePath();
       ctx.fill();
 
-      // Larger, more visible label
-      const t = translations[currentLang] || translations.en;
       ctx.fillStyle = '#10b981';
       ctx.font = 'bold 16px Arial';
       ctx.textAlign = 'center';
@@ -675,7 +828,6 @@
     graphCtx.lineTo(50, 20);
     graphCtx.stroke();
     
-    // Add axis labels
     const t = translations[currentLang] || translations.en;
     graphCtx.fillStyle = '#6b7280';
     graphCtx.font = '12px Arial';
@@ -713,11 +865,10 @@
     needsGraphRedraw = false;
   }
 
-  // Throttled update function for sliders
   const throttledUpdate = throttle(() => {
     needsRedraw = true;
     updateDisplays();
-  }, 16); // ~60fps
+  }, 16);
 
   // Event Listeners
   areaSlider.addEventListener('input', () => {
@@ -741,25 +892,48 @@
   });
 
   velocitySlider.addEventListener('input', () => {
-    velocityVal.textContent = parseFloat(velocitySlider.value).toFixed(1);
+    const sliderValue = parseFloat(velocitySlider.value);
+    velocityVal.textContent = sliderValue.toFixed(1);
+    
+    // Only update currentVelocity if not in auto motion (user is adjusting slider manually)
+    if (!autoMotionActive) {
+      currentVelocity = sliderValue;
+    }
+    
     throttledUpdate();
+  });  
+
+  // External Force slider listener
+  externalForceSlider.addEventListener('input', () => {
+    externalForceVal.textContent = parseFloat(externalForceSlider.value).toFixed(1);
+    needsRedraw = true;
+    updateDisplays();
   });
 
   autoMotionBtn.addEventListener('click', () => {
     autoMotionActive = !autoMotionActive;
     const t = translations[currentLang] || translations.en;
     autoMotionBtn.textContent = autoMotionActive ? t.pause : t.autoMotion;
+    
+    // CORRECTED: Set initial velocity from slider when starting auto motion
+    if (autoMotionActive) {
+      currentVelocity = parseFloat(velocitySlider.value);
+    }
+    
     needsRedraw = true;
-    resumeAnimation(); // Ensure animation continues
-  });
+    resumeAnimation();
+  });  
 
   resetBtn.addEventListener('click', () => {
     autoMotionActive = false;
     coilX = 80;
     lastCoilX = coilX;
+    currentVelocity = 0;
     positionHistory.clear();
     forceHistory.clear();
     autoMotionBtn.textContent = '▶ AUTO MOTION';
+    velocitySlider.value = 0;
+    velocityVal.textContent = '0.0';
     needsRedraw = true;
     needsGraphRedraw = true;
     lastPhysicsState = null;
@@ -768,7 +942,7 @@
     drawGraph();
   });
 
-  // Drag functionality with high DPI support
+  // Drag functionality
   function getCanvasMousePos(e) {
     const rect = canvas.getBoundingClientRect();
     return (e.clientX - rect.left) * (canvas.width / devicePixelRatio / rect.width);
@@ -777,52 +951,53 @@
   canvas.addEventListener('mousedown', (e) => {
     isDragging = true;
     dragStartX = getCanvasMousePos(e);
+    currentVelocity = 0;
     needsRedraw = true;
-    resumeAnimation(); // Ensure animation continues during drag
+    resumeAnimation();
   });
 
   canvas.addEventListener('mousemove', (e) => {
     if (isDragging) {
       const currentX = getCanvasMousePos(e);
       const delta = currentX - dragStartX;
+      
+      // CORRECTED: Calculate velocity from mouse movement
+      const timeDelta = 0.016; // ~60fps
+      currentVelocity = (delta / timeDelta) * 0.01; // Scale appropriately
+      
       coilX += delta;
+      coilX = Math.max(CANVAS_MIN_X, Math.min(CANVAS_MAX_X, coilX));
+      
       dragStartX = currentX;
       autoMotionActive = false;
       const t = translations[currentLang] || translations.en;
       autoMotionBtn.textContent = t.autoMotion;
       needsRedraw = true;
     }
-  });
+  });  
 
   canvas.addEventListener('mouseup', () => {
     isDragging = false;
   });
 
-  // Also handle mouseleave to stop dragging if mouse leaves canvas
   canvas.addEventListener('mouseleave', () => {
     isDragging = false;
   });
 
-  // Optimized animation loop - always runs but only updates when needed
+  // Animation loop
   let animationFrameId = null;
   let lastTime = 0;
   
   function animate(currentTime) {
     if (!lastTime) lastTime = currentTime;
-    const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+    const deltaTime = (currentTime - lastTime) / 1000;
     lastTime = currentTime;
 
     if (autoMotionActive) {
-      const velocity = parseFloat(velocitySlider.value);
-      // Move coil based on velocity (pixels per second)
-      coilX += velocity * 60 * deltaTime; // 60 pixels per m/s at 60fps
-      if (coilX > (canvas.width / devicePixelRatio) + 50) {
-        coilX = -50;
-      }
+      updateVelocity(deltaTime);
       needsRedraw = true;
     }
 
-    // Always update current animation time for smooth current visualization
     currentAnimationTime += deltaTime;
     if (computePhysics().I > 0.0001) {
       needsRedraw = true;
@@ -838,7 +1013,6 @@
       drawGraph();
     }
 
-    // Always continue animation to keep current visualization smooth
     animationFrameId = requestAnimationFrame(animate);
   }
 
@@ -847,14 +1021,12 @@
   drawScene();
   drawGraph();
   
-  // Start animation loop
   animationFrameId = requestAnimationFrame(animate);
   
-  // Resume animation on user interaction
   function resumeAnimation() {
     if (!animationFrameId) {
       needsRedraw = true;
-      lastTime = 0; // Reset time for smooth animation
+      lastTime = 0;
       animate(performance.now());
     }
   }
@@ -904,25 +1076,21 @@
 
     const centerY = canvasHeight / 2;
 
-    // Field region - ensure it's fully visible with strong contrast
-    // Make field extend fully across canvas height
-    const fieldTop = 0; // Start at top of canvas
-    const fieldBottom = canvasHeight; // End at bottom of canvas
+    const fieldTop = 0;
+    const fieldBottom = canvasHeight;
     const fieldHeight = fieldBottom - fieldTop;
     
-    // Stronger background fill for visibility
     ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
     ctx.fillRect(fieldX, fieldTop, fieldWidth, fieldHeight);
     ctx.strokeStyle = '#dc2626';
     ctx.lineWidth = 6;
     ctx.strokeRect(fieldX, fieldTop, fieldWidth, fieldHeight);
 
-    // Magnetic field X symbols - smaller and more spaced
     ctx.strokeStyle = '#dc2626';
     ctx.fillStyle = '#dc2626';
     ctx.lineWidth = 3;
-    const gridRows = Math.floor(fieldHeight / 60); // More spacing between rows
-    const gridCols = 6; // Fewer columns for more spacing
+    const gridRows = Math.floor(fieldHeight / 60);
+    const gridCols = 6;
     const cellWidth = fieldWidth / gridCols;
     const cellHeight = fieldHeight / gridRows;
     
@@ -939,12 +1107,10 @@
       }
     }
 
-    // Field label - positioned inside field at top with better visibility
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 16px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    // Add background for better text visibility
     const t = translations[currentLang] || translations.en;
     const labelText = t.magneticFieldLabel;
     const labelMetrics = ctx.measureText(labelText);
@@ -955,13 +1121,11 @@
     ctx.fillStyle = '#ffffff';
     ctx.fillText(labelText, labelX, labelY);
 
-    // Draw straight conductor (vertical bar) - clearer design
     const conductorWidth = 25;
     const conductorHeight = 220;
     const conductorLeft = coilX - conductorWidth / 2;
     const conductorTop = centerY - conductorHeight / 2;
     
-    // Conductor with gradient effect
     const gradient = ctx.createLinearGradient(conductorLeft, conductorTop, conductorLeft + conductorWidth, conductorTop);
     gradient.addColorStop(0, '#818cf8');
     gradient.addColorStop(1, '#6366f1');
@@ -971,82 +1135,86 @@
     ctx.lineWidth = 3;
     ctx.strokeRect(conductorLeft, conductorTop, conductorWidth, conductorHeight);
     
-    // Removed CONDUCTOR label as requested
-    
-    // Calculate EMF for top and bottom
     const p = computePhysics();
     const conductorRight = coilX + conductorWidth / 2;
-    const velocity = parseFloat(velocitySlider.value);
-    const B = parseFloat(fieldSlider.value);
+    const externalForce = parseFloat(externalForceSlider.value);
     
+    // CORRECTED: EMF calculation only at boundaries (Faraday's Law)
     let emfTop = 0;
     let emfBottom = 0;
     
-    // Check if conductor is in field (any part overlapping)
-    const conductorInField = conductorRight > fieldX && conductorLeft < fieldX_end;
+    const fluxState = getFluxState(coilX);
     
-    if (conductorInField) {
-      // EMF = B * v * L (for straight conductor)
-      const L = conductorHeight / 2; // Length of each half
-      emfTop = B * velocity * L * 0.1; // Top half
-      emfBottom = B * velocity * L * 0.1; // Bottom half
+    // Only calculate EMF when flux is changing (entering or exiting field)
+    if (fluxState.state === 'entering' || fluxState.state === 'exiting') {
+      const L = conductorHeight / 2;
+      const B = parseFloat(fieldSlider.value);
+      const velocity = currentVelocity;
+      
+      // ✓ NEW: Only calculate EMF if velocity is significant (not near zero)
+      if (Math.abs(velocity) > 0.01) {  // Threshold to avoid floating point errors
+        emfTop = Math.abs(B * velocity * L * 0.1);
+        emfBottom = Math.abs(B * velocity * L * 0.1);
+      } else {
+        emfTop = 0;
+        emfBottom = 0;
+      }
     }
     
-    // Show EMF distribution with +/- charges INSIDE the conductor (top and bottom)
-    if (emfTop > 0.001 || emfBottom > 0.001) {
-      // Top: positive charge - inside conductor at top
-      ctx.fillStyle = '#ef4444';
-      ctx.font = 'bold 28px Arial';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      
-      // Draw circle background for + sign inside conductor at top
-      const topChargeY = conductorTop + 20; // Inside conductor, near top
-      ctx.beginPath();
-      ctx.arc(coilX, topChargeY, 18, 0, Math.PI * 2);
-      ctx.fillStyle = '#fee2e2';
-      ctx.fill();
-      ctx.strokeStyle = '#ef4444';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      
-      // Draw + sign
-      ctx.fillStyle = '#dc2626';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(coilX - 10, topChargeY);
-      ctx.lineTo(coilX + 10, topChargeY);
-      ctx.moveTo(coilX, topChargeY - 10);
-      ctx.lineTo(coilX, topChargeY + 10);
-      ctx.stroke();
-      
-      // Bottom: negative charge - inside conductor at bottom
-      ctx.fillStyle = '#6366f1';
-      
-      // Draw circle background for - sign inside conductor at bottom
-      const bottomChargeY = conductorTop + conductorHeight - 20; // Inside conductor, near bottom
-      ctx.beginPath();
-      ctx.arc(coilX, bottomChargeY, 18, 0, Math.PI * 2);
-      ctx.fillStyle = '#e0e7ff';
-      ctx.fill();
-      ctx.strokeStyle = '#6366f1';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      
-      // Draw - sign
-      ctx.fillStyle = '#4f46e5';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(coilX - 10, bottomChargeY);
-      ctx.lineTo(coilX + 10, bottomChargeY);
-      ctx.stroke();
-    }
+    // NEW: Detailed charge display condition  
+    const shouldShowCharges =   
+        Math.abs(currentVelocity) > 0.01 && // Velocity is significant  
+         (conductorLeft > fieldX_end && conductorRight > fieldX_end || // Outside field (Right side)  
+         (conductorLeft < fieldX && conductorRight > fieldX) || // Entering field  
+         (conductorLeft >= fieldX && conductorRight <= fieldX_end) || // Inside field  
+         (conductorLeft < fieldX_end && conductorRight > fieldX_end)); // Exiting field  
     
-    // Velocity arrow
-    if (autoMotionActive || Math.abs(coilX - lastCoilX) > 0.1) {
+    if (shouldShowCharges) {  
+        ctx.fillStyle = '#ef4444';  
+        ctx.font = 'bold 28px Arial';  
+        ctx.textAlign = 'center';  
+        ctx.textBaseline = 'middle';  
+        
+        const topChargeY = conductorTop + 20;  
+        ctx.beginPath();  
+        ctx.arc(coilX, topChargeY, 18, 0, Math.PI * 2);  
+        ctx.fillStyle = '#fee2e2';  
+        ctx.fill();  
+        ctx.strokeStyle = '#ef4444';  
+        ctx.lineWidth = 3;  
+        ctx.stroke();  
+        
+        ctx.fillStyle = '#dc2626';  
+        ctx.lineWidth = 4;  
+        ctx.beginPath();  
+        ctx.moveTo(coilX - 10, topChargeY);  
+        ctx.lineTo(coilX + 10, topChargeY);  
+        ctx.moveTo(coilX, topChargeY - 10);  
+        ctx.lineTo(coilX, topChargeY + 10);  
+        ctx.stroke();  
+        
+        const bottomChargeY = conductorTop + conductorHeight - 20;  
+        ctx.beginPath();  
+        ctx.arc(coilX, bottomChargeY, 18, 0, Math.PI * 2);  
+        ctx.fillStyle = '#e0e7ff';  
+        ctx.fill();  
+        ctx.strokeStyle = '#6366f1';  
+        ctx.lineWidth = 3;  
+        ctx.stroke();  
+        
+        ctx.fillStyle = '#4f46e5';  
+        ctx.lineWidth = 4;  
+        ctx.beginPath();  
+        ctx.moveTo(coilX - 10, bottomChargeY);  
+        ctx.lineTo(coilX + 10, bottomChargeY);  
+        ctx.stroke();  
+    }  
+    
+    // Velocity arrow - only show if velocity > 0  
+    if (currentVelocity > 0.01 && (autoMotionActive || Math.abs(coilX - lastCoilX) > 0.1)) {  
       ctx.strokeStyle = '#10b981';
       ctx.lineWidth = 3;
-      const arrowLength = 30 + velocity * 10;
+      const arrowLength = 30 + currentVelocity * 10;
       ctx.beginPath();
       ctx.moveTo(coilX + conductorWidth / 2 + 10, centerY);
       ctx.lineTo(coilX + conductorWidth / 2 + 10 + arrowLength, centerY);
@@ -1059,28 +1227,60 @@
       ctx.lineTo(coilX + conductorWidth / 2 + 10 + arrowLength - 8, centerY + 5);
       ctx.closePath();
       ctx.fill();
+      
+      ctx.fillStyle = '#10b981';
+      ctx.font = 'bold 11px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(t.velocityLabel.replace('{value}', currentVelocity.toFixed(1)), coilX + conductorWidth / 2 + 10 + arrowLength / 2, centerY - 15);
+    }
+
+    // External Force arrow for conductor
+    if (externalForce > 0.001) {
+      const forceScale = Math.max(externalForce * 50, 20);
+      const arrowEndX = coilX + conductorWidth / 2 + 10 + forceScale;
+      
+      ctx.strokeStyle = '#48c6ec';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(coilX + conductorWidth / 2 + 10, centerY + 30);
+      ctx.lineTo(arrowEndX, centerY + 30);
+      ctx.stroke();
+
+      ctx.fillStyle = '#48c6ec';
+      ctx.beginPath();
+      ctx.moveTo(arrowEndX, centerY + 30);
+      ctx.lineTo(arrowEndX - 12, centerY + 30 - 8);
+      ctx.lineTo(arrowEndX - 12, centerY + 30 + 8);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#48c6ec';
+      ctx.font = 'bold 12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(t.externalForceLabel + ': ' + externalForce.toFixed(2) + 'N', (coilX + conductorWidth / 2 + 10 + arrowEndX) / 2, centerY + 50);
     }
     
-    // Force (Lenz) arrow - show when entering or exiting
-    // Direction: always points LEFT (opposes rightward motion, whether entering or exiting)
-    if (p.F > 0.0001) {
-      // Minimum visible scale to ensure it's always noticeable
-      const minScale = 30; // Minimum arrow length
-      const forceScale = Math.max(p.F * 2, 0.1); // Scale factor
+    // ✓ CORRECTED: Lenz Force should show whenever flux is changing (entering/exiting)  
+    // Not just when current is large  
+    const fluxStateForForce = getFluxState(coilX);  
+    const shouldShowForce = (fluxStateForForce.state === 'entering' || fluxStateForForce.state === 'exiting')   
+                            && Math.abs(currentVelocity) > 0.01;  
+    
+    if (shouldShowForce || p.lenzForce > 0.0001) {  
+      const minScale = 30;
+      const forceScale = Math.max(p.lenzForce * 2, 0.1);
       const scale = Math.max(minScale, Math.min(forceScale * 50, 80));
       
-      // Force always opposes motion (rightward), so always points left
       const arrowStartX = coilX - conductorWidth / 2 - 15;
       const arrowEndX = arrowStartX - scale;
       
       ctx.strokeStyle = '#10b981';
-      ctx.lineWidth = 6; // Thicker line
+      ctx.lineWidth = 6;
       ctx.beginPath();
       ctx.moveTo(arrowStartX, centerY);
       ctx.lineTo(arrowEndX, centerY);
       ctx.stroke();
 
-      // Larger arrowhead pointing left
       ctx.fillStyle = '#10b981';
       ctx.beginPath();
       ctx.moveTo(arrowEndX, centerY);
@@ -1089,8 +1289,6 @@
       ctx.closePath();
       ctx.fill();
 
-      // Larger, more visible label
-      const t = translations[currentLang] || translations.en;
       ctx.fillStyle = '#10b981';
       ctx.font = 'bold 16px Arial';
       ctx.textAlign = 'center';
@@ -1098,15 +1296,13 @@
       ctx.fillText(t.forceLabel, labelX, centerY - 20);
     }
     
-    // Update EMF displays
     emfTopEl.innerHTML = emfTop.toFixed(3) + ' <span class="stat-unit">V</span>';
     emfBottomEl.innerHTML = emfBottom.toFixed(3) + ' <span class="stat-unit">V</span>';
     
     needsRedraw = false;
   }
   
-  // Resume on any slider change
-  [areaSlider, turnsSlider, fieldSlider, resSlider, velocitySlider].forEach(slider => {
+  [areaSlider, turnsSlider, fieldSlider, resSlider, velocitySlider, externalForceSlider].forEach(slider => {
     slider.addEventListener('input', resumeAnimation);
   });
   
@@ -1118,83 +1314,99 @@
     currentLang = lang;
     const t = translations[lang];
     
-    // Update header
     document.querySelector('.header h1').textContent = t.headerTitle;
     document.querySelector('.header p').textContent = t.headerSubtitle;
     
-    // Update physics principle
     physicsPrincipleEl.innerHTML = t.physicsPrinciple;
     
-    // Update button text
     langToggleBtn.textContent = lang === 'en' ? '中文' : 'English';
     
-    // Update visualization title
-    document.querySelector('.card-title span').nextSibling.textContent = ' ' + t.visualization;
+    const cardTitles = document.querySelectorAll('.card-title');
+    if (cardTitles[0]) {
+      cardTitles[0].innerHTML = '<span>🎯</span> ' + t.visualization;
+    }
     
-    // Update legend
     const legendItems = document.querySelectorAll('.legend-item span');
-    legendItems[0].textContent = t.coilLoops;
-    legendItems[1].textContent = t.magneticField;
-    legendItems[2].textContent = t.opposingForce;
-    legendItems[3].textContent = t.inducedCurrent;
-    
-    // Update controls title
-    const controlsTitle = document.querySelectorAll('.card-title')[1];
-    controlsTitle.querySelector('span').nextSibling.textContent = ' ' + t.controls;
-    
-    // Update control labels - select only the first span (label) in each control-label, not the value span
-    const controlLabelElements = document.querySelectorAll('.control-label');
-    if (controlLabelElements.length >= 5) {
-      controlLabelElements[0].querySelector('span:first-child').textContent = t.coilArea;
-      controlLabelElements[1].querySelector('span:first-child').textContent = t.numberOfTurns;
-      controlLabelElements[2].querySelector('span:first-child').textContent = t.magneticFieldB;
-      controlLabelElements[3].querySelector('span:first-child').textContent = t.resistance;
-      controlLabelElements[4].querySelector('span:first-child').textContent = t.velocity;
+    if (legendItems.length >= 4) {
+      legendItems[0].textContent = t.coilLoops;
+      legendItems[1].textContent = t.magneticField;
+      legendItems[2].textContent = t.opposingForce;
+      legendItems[3].textContent = t.inducedCurrent;
     }
     
-    // Update buttons
-    const autoMotionBtn = document.getElementById('autoMotion');
-    if (autoMotionActive) {
-      autoMotionBtn.textContent = t.pause;
-    } else {
-      autoMotionBtn.textContent = t.autoMotion;
-    }
-    document.getElementById('reset').textContent = t.reset;
-    const modeToggleBtn = document.getElementById('modeToggle');
-    if (mode === 'conductor') {
-      modeToggleBtn.textContent = t.switchToCoil;
-    } else {
-      modeToggleBtn.textContent = t.switchToConductor;
+    if (cardTitles[1]) {
+      cardTitles[1].innerHTML = '<span>⚙️</span> ' + t.controls;
     }
     
-    // Update hint
-    document.querySelector('.hint').innerHTML = t.dragHint;
+    const controlLabelElements = document.querySelectorAll('.control-label span:first-child');
+    if (controlLabelElements.length >= 6) {
+      controlLabelElements[0].textContent = t.coilArea;
+      controlLabelElements[1].textContent = t.numberOfTurns;
+      controlLabelElements[2].textContent = t.magneticFieldB;
+      controlLabelElements[3].textContent = t.resistance;
+      controlLabelElements[4].textContent = t.velocity;
+      controlLabelElements[5].textContent = t.externalForce;
+    }
+
     
-    // Update stat labels
+    const autoMotionBtnText = document.getElementById('autoMotion');
+    if (autoMotionBtnText) {
+      if (autoMotionActive) {
+        autoMotionBtnText.textContent = t.pause;
+      } else {
+        autoMotionBtnText.textContent = t.autoMotion;
+      }
+    }
+    
+    const resetBtnText = document.getElementById('reset');
+    if (resetBtnText) {
+      resetBtnText.textContent = t.reset;
+    }
+    
+    const modeToggleBtnText = document.getElementById('modeToggle');
+    if (modeToggleBtnText) {
+      if (mode === 'conductor') {
+        modeToggleBtnText.textContent = t.switchToCoil;
+      } else {
+        modeToggleBtnText.textContent = t.switchToConductor;
+      }
+    }
+    
+    const hintEl = document.querySelector('.hint');
+    if (hintEl) {
+      hintEl.innerHTML = t.dragHint;
+    }
+    
     const statLabels = document.querySelectorAll('.stat-label');
-    statLabels[0].textContent = t.fluxRate;
-    statLabels[1].textContent = t.inducedEMF;
-    statLabels[2].textContent = t.current;
-    statLabels[3].textContent = t.force;
-    if (statLabels[4]) statLabels[4].textContent = t.emfTop;
-    if (statLabels[5]) statLabels[5].textContent = t.emfBottom;
+    if (statLabels.length >= 4) {
+      statLabels[0].textContent = t.fluxRate;
+      statLabels[1].textContent = t.inducedEMF;
+      statLabels[2].textContent = t.current;
+      statLabels[3].textContent = t.force;
+      if (statLabels[4]) statLabels[4].textContent = t.externalForceLabel;
+      if (statLabels[5]) statLabels[5].textContent = t.netForceLabel;
+      if (statLabels[6]) statLabels[6].textContent = t.emfTop;
+      if (statLabels[7]) statLabels[7].textContent = t.emfBottom;
+    }
     
-    // Update graph title
-    document.querySelector('.graph-card-title').textContent = t.graphTitle;
+    const graphCardTitle = document.querySelector('.graph-card-title');
+    if (graphCardTitle) {
+      graphCardTitle.textContent = t.graphTitle;
+    }
     
-     // Update status message immediately (force update even if state hasn't changed)
-     needsRedraw = true;
-     needsGraphRedraw = true; // Redraw graph to update axis labels
-     updateDisplays();
-     // Force status message update with current physics state
-     const currentPhysics = computePhysics();
-     updateStatusMessage(currentPhysics);
-     drawGraph(); // Redraw graph immediately to update axis labels
-   }
+    needsRedraw = true;
+    needsGraphRedraw = true;
+    updateDisplays();
+    const currentPhysics = computePhysics();
+    updateStatusMessage(currentPhysics);
+    drawGraph();
+  }
   
-  langToggleBtn.addEventListener('click', () => {
-    const newLang = currentLang === 'en' ? 'zh' : 'en';
-    updateLanguage(newLang);
-  });
+  if (langToggleBtn) {
+    langToggleBtn.addEventListener('click', () => {
+      const newLang = currentLang === 'en' ? 'zh' : 'en';
+      updateLanguage(newLang);
+    });
+  }
   
 })();

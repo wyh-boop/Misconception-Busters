@@ -44,8 +44,13 @@
             <div class="legend-color" style="background: #f59e0b;"></div>
             <span>Induced Current</span>
           </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background: #48c6ec;"></div>
+            <span>External Force</span>
+          </div>
         </div>
 
+        
         <div id="status" class="status-box">
           ⏸ Coil is <strong>completely outside</strong> field: <strong>NO flux change → NO force</strong>
         </div>
@@ -101,6 +106,14 @@
             </div>
             <input type="range" id="velocity" min="0.5" max="5.0" step="0.1" value="2.0">
           </div>
+
+          <div class="control-group">
+            <div class="control-label">
+              <span>External Force</span>
+              <span class="control-value"><span id="externalForceVal">0.0</span> N</span>
+            </div>
+            <input type="range" id="externalForce" min="0" max="10" step="0.1" value="0">
+          </div>          
 
           <div class="button-group">
             <button class="primary" id="autoMotion">▶ AUTO MOTION</button>
