@@ -21,8 +21,8 @@
   const resetBtn = document.getElementById('reset');
   
   // NEW: External Force Slider
-  const externalForceSlider = document.getElementById('externalForce') || createExternalForceSlider();
-  const externalForceVal = document.getElementById('externalForceVal') || createExternalForceVal();
+  const externalForceSlider = document.getElementById('externalForce');
+  const externalForceVal = document.getElementById('externalForceVal');
 
   const areaVal = document.getElementById('areaVal');
   const turnsVal = document.getElementById('turnsVal');
@@ -33,56 +33,11 @@
   const emfEl = document.getElementById('emf');
   const IEl = document.getElementById('I');
   const FEl = document.getElementById('F');
-  const externalForceEl = document.getElementById('externalForceDisplay') || createExternalForceDisplay();
-  const netForceEl = document.getElementById('netForce') || createNetForceDisplay();
-
-  // Helper function to create external force val span
-  function createExternalForceVal() {
-    const span = document.createElement('span');
-    span.id = 'externalForceVal';
-    span.textContent = '0.0';
-    return span;
-  }
-
-  // Helper function to create external force slider if not in HTML
-  function createExternalForceSlider() {
-    const container = document.querySelector('.control-group');
-    const div = document.createElement('div');
-    div.className = 'control-label';
-    div.innerHTML = `
-      <span>External Force</span>
-      <input type="range" id="externalForce" min="0" max="10" step="0.1" value="0">
-      <span id="externalForceVal">0.0</span>
-    `;
-    container?.appendChild(div);
-    return document.getElementById('externalForce');
-  }
-
-  // Helper function to create external force display
-  function createExternalForceDisplay() {
-    const container = document.querySelector('.stats-grid');
-    const div = document.createElement('div');
-    div.className = 'stat-card';
-    div.innerHTML = `
-      <div class="stat-label">External Force</div>
-      <div class="stat-value" id="externalForceDisplay">0.000 <span class="stat-unit">N</span></div>
-    `;
-    container?.appendChild(div);
-    return document.getElementById('externalForceDisplay');
-  }
-
-  // Helper function to create net force display
-  function createNetForceDisplay() {
-    const container = document.querySelector('.stats-grid');
-    const div = document.createElement('div');
-    div.className = 'stat-card';
-    div.innerHTML = `
-      <div class="stat-label">Net Force</div>
-      <div class="stat-value" id="netForce">0.000 <span class="stat-unit">N</span></div>
-    `;
-    container?.appendChild(div);
-    return document.getElementById('netForce');
-  }
+  // ...
+  // 注意：這裡直接抓取你在 HTML 定義的 ID
+  // 你的 HTML 中 ID 是 'extForceDisplay' 和 'netForceDisplay'，請確保這裡一致
+  const externalForceEl = document.getElementById('extForceDisplay'); 
+  const netForceEl = document.getElementById('netForceDisplay');
 
   // State Variables
   let coilX = 80;
@@ -109,7 +64,7 @@
   // Language translations
   const translations = {
     en: {
-      physicsPrinciple: '<strong>📚 Key Physics Principles:</strong><br><strong>Faraday\'s Law:</strong> Force only appears when magnetic flux through the coil <strong>changes</strong>. Inside a uniform field → constant flux → <strong>NO force</strong>.<br><strong>Lenz\'s Law:</strong> The induced current creates a magnetic field that <strong>opposes the change causing it</strong>. This is why the force always opposes the motion when entering or exiting the field.',
+      physicsPrinciple: '<strong>📚 Key Physics Principles:</strong><br><strong>Faraday\'s Law:</strong> A change in magnetic flux generates an <strong>Induced EMF</strong>. Only if the circuit is closed, this EMF drives an <strong>Induced Current</strong>.<br><strong>Lenz\'s Law:</strong> The <strong>Induced Current</strong> interacts with the magnetic field to create a physical <strong>Force</strong>. This force always <strong>opposes the motion</strong> (No Current → No Force).',
       headerTitle: '⚡ Electromagnetic Induction Simulator',
       headerSubtitle: 'Realistic Coil with Draggable Motion Control & External Force',
       visualization: 'Real-Time Visualization',
@@ -155,7 +110,7 @@
       motionAccelerating: '🟢 Accelerating (F_external > F_Lenz)'
     },
     zh: {
-      physicsPrinciple: '<strong>📚 關鍵物理原理：</strong><br><strong>法拉第定律：</strong>只有當通過線圈的磁通量<strong>改變</strong>時才會產生力。在均勻磁場內 → 磁通量恆定 → <strong>無力</strong>。<br><strong>楞次定律：</strong>感生電流（或電動勢）<strong>總是與產生它的變化抗衡，或傾向與這個變化抗衡。</strong>。這就是為什麼進入或離開磁場時，力總是與運動方向相反。',
+      physicsPrinciple: '<strong>📚 關鍵物理原理：</strong><br><strong>法拉第定律：</strong>磁通量的變化產生<strong>感應電動勢 (EMF)</strong>。只有在電路閉合時，此電動勢才會驅動<strong>感應電流</strong>。<br><strong>楞次定律：</strong>此<strong>感應電流</strong>與磁場相互作用產生物理上的<strong>磁力</strong>。這個力總是<strong>抵抗運動方向</strong>（若無電流 → 則無磁力）。',
       headerTitle: '⚡ 電磁感應模擬器',
       headerSubtitle: '可拖動線圈的真實模擬及外力',
       visualization: '即時視覺化',
@@ -383,7 +338,8 @@
     
     const dPhiDt = fluxState.fluxChangeRate;
     const emf = dPhiDt;
-    const I = emf / R;  
+    // 修正：直導體視為開路 (I=0)，線圈視為閉路 (I=emf/R)
+    const I = mode === 'conductor' ? 0 : emf / R;
     
     // CORRECTED: Use same velocity threshold as EMF calculation
     // Force should be zero when velocity is negligible
@@ -431,7 +387,26 @@
 
   function updateStatusMessage(physics) {
     const t = translations[currentLang] || translations.en;
-    const objectName = mode === 'conductor' ? t.conductor : t.coil;
+
+    // --- 1. 導體模式 (Conductor Mode) ---
+    if (mode === 'conductor') {
+      let msg = '';
+      if (physics.state === 'outside') {
+        msg = '⏸ Conductor is completely outside field: NO flux change → <strong>NO induced emf</strong>';
+      } else if (physics.state === 'entering') {
+        msg = '⚡ Conductor ENTERING field: Flux increasing → <strong>Induced emf</strong>';
+      } else if (physics.state === 'inside') {
+        msg = '✓ Conductor completely inside uniform field: Φ constant → <strong>NO MORE extra induced emf</strong>, but the original induced emf will keep the upper side of the rod is still positively charged and the lower side of the rod is still negatively charged.';
+      } else if (physics.state === 'exiting') {
+        msg = '⚡ Conductor EXITING field: Flux decreasing → <strong>Induced emf</strong>';
+      }
+      statusEl.innerHTML = msg;
+      statusEl.className = 'status-box';
+      return; 
+    }
+
+    // --- 2. 線圈模式 (Coil Mode) ---
+    const objectName = t.coil;
     const messages = {
       'outside': t.statusOutside.replace('{object}', objectName),
       'inside': t.statusInside.replace('{object}', objectName),
@@ -441,20 +416,22 @@
     
     statusEl.innerHTML = messages[physics.state] || '';
     
-    // Add motion status based on force balance
-    let motionStatus = '';
-    const tolerance = 0.1; // Tolerance for "equal" forces
-    
-    if (physics.lenzForce > physics.externalForce + tolerance && currentVelocity > 0) {
-      motionStatus = t.motionSlowing;
-    } else if (Math.abs(physics.lenzForce - physics.externalForce) <= tolerance && currentVelocity > 0.01) {
-      motionStatus = t.motionConstant;
-    } else if (physics.externalForce > physics.lenzForce + tolerance) {
-      motionStatus = t.motionAccelerating;
-    }
-    
-    if (motionStatus) {
-      statusEl.innerHTML += '<br>' + motionStatus;
+    // --- 關鍵修改：只有當不在 'outside' 狀態時，才檢查力平衡 ---
+    if (physics.state !== 'outside') {
+        let motionStatus = '';
+        const tolerance = 0.1; 
+        
+        if (physics.lenzForce > physics.externalForce + tolerance && currentVelocity > 0) {
+          motionStatus = t.motionSlowing;
+        } else if (Math.abs(physics.lenzForce - physics.externalForce) <= tolerance && currentVelocity > 0.01) {
+          motionStatus = t.motionConstant;
+        } else if (physics.externalForce > physics.lenzForce + tolerance) {
+          motionStatus = t.motionAccelerating;
+        }
+        
+        if (motionStatus) {
+          statusEl.innerHTML += '<br>' + motionStatus;
+        }
     }
     
     statusEl.className = (physics.lenzForce > 0.001) ? 'status-box active' : 'status-box';
@@ -1039,6 +1016,12 @@
   const emfBottomCard = document.getElementById('emfBottomCard');
   const emfTopEl = document.getElementById('emfTop');
   const emfBottomEl = document.getElementById('emfBottom');
+
+  // --- NEW: Get references to the cards we want to hide ---
+  // --- 記得在上方宣告處加入這行抓取新 ID ---
+  const lenzForceCard = document.getElementById('lenzForceCard'); 
+  const extForceCard = document.getElementById('extForceCard');
+  const netForceCard = document.getElementById('netForceCard');
   
   modeToggleBtn.addEventListener('click', () => {
     mode = mode === 'coil' ? 'conductor' : 'coil';
@@ -1049,6 +1032,12 @@
       areaGroup.style.display = 'none';
       turnsGroup.style.display = 'none';
       currentCard.style.display = 'none';
+      
+      // --- 隱藏所有與「力」相關的卡片 ---
+      if (lenzForceCard) lenzForceCard.style.display = 'none'; // 隱藏 Force (Lenz)
+      if (extForceCard) extForceCard.style.display = 'none';   // 隱藏 External Force
+      if (netForceCard) netForceCard.style.display = 'none';   // 隱藏 Net Force
+
       emfTopCard.style.display = 'block';
       emfBottomCard.style.display = 'block';
     } else {
@@ -1056,6 +1045,12 @@
       areaGroup.style.display = 'block';
       turnsGroup.style.display = 'block';
       currentCard.style.display = 'block';
+      
+      // --- 恢復顯示所有卡片 ---
+      if (lenzForceCard) lenzForceCard.style.display = 'block';
+      if (extForceCard) extForceCard.style.display = 'block';
+      if (netForceCard) netForceCard.style.display = 'block';
+
       emfTopCard.style.display = 'none';
       emfBottomCard.style.display = 'none';
     }
@@ -1146,19 +1141,21 @@
     const fluxState = getFluxState(coilX);
     
     // Only calculate EMF when flux is changing (entering or exiting field)
+    // NEW CODE: Link EMF Top/Bottom directly to dPhi/dt (Induced EMF)
+    // 這樣做可以確保它們加起來等於 Induced EMF，或者與 Induced EMF 保持一致
+    
+    // 1. 獲取當前的 Induced EMF 數值 (由 computePhysics 計算出的 dPhiDt)
+    const currentPhysics = computePhysics();
+    const totalInducedEmf = currentPhysics.emf; // 這就是 dPhi/dt
+
+    // 2. 將總 Induced EMF 分配給 Top 和 Bottom
     if (fluxState.state === 'entering' || fluxState.state === 'exiting') {
-      const L = conductorHeight / 2;
-      const B = parseFloat(fieldSlider.value);
-      const velocity = currentVelocity;
-      
-      // ✓ NEW: Only calculate EMF if velocity is significant (not near zero)
-      if (Math.abs(velocity) > 0.01) {  // Threshold to avoid floating point errors
-        emfTop = Math.abs(B * velocity * L * 0.1);
-        emfBottom = Math.abs(B * velocity * L * 0.1);
-      } else {
+        // 因為是中心接地，我們將總電動勢平分顯示
+        emfTop = totalInducedEmf / 2;
+        emfBottom = -1 * totalInducedEmf / 2;
+    } else {
         emfTop = 0;
         emfBottom = 0;
-      }
     }
     
     // NEW: Detailed charge display condition  
@@ -1260,13 +1257,8 @@
       ctx.fillText(t.externalForceLabel + ': ' + externalForce.toFixed(2) + 'N', (coilX + conductorWidth / 2 + 10 + arrowEndX) / 2, centerY + 50);
     }
     
-    // ✓ CORRECTED: Lenz Force should show whenever flux is changing (entering/exiting)  
-    // Not just when current is large  
-    const fluxStateForForce = getFluxState(coilX);  
-    const shouldShowForce = (fluxStateForForce.state === 'entering' || fluxStateForForce.state === 'exiting')   
-                            && Math.abs(currentVelocity) > 0.01;  
-    
-    if (shouldShowForce || p.lenzForce > 0.0001) {  
+    // 修正：完全依賴計算出的 p.lenzForce。如果它是 0 (如直導體模式)，就不畫箭頭。
+    if (p.lenzForce > 0.0001) {
       const minScale = 30;
       const forceScale = Math.max(p.lenzForce * 2, 0.1);
       const scale = Math.max(minScale, Math.min(forceScale * 50, 80));
@@ -1338,15 +1330,23 @@
       cardTitles[1].innerHTML = '<span>⚙️</span> ' + t.controls;
     }
     
-    const controlLabelElements = document.querySelectorAll('.control-label span:first-child');
-    if (controlLabelElements.length >= 6) {
-      controlLabelElements[0].textContent = t.coilArea;
-      controlLabelElements[1].textContent = t.numberOfTurns;
-      controlLabelElements[2].textContent = t.magneticFieldB;
-      controlLabelElements[3].textContent = t.resistance;
-      controlLabelElements[4].textContent = t.velocity;
-      controlLabelElements[5].textContent = t.externalForce;
-    }
+    // 修正：使用精確的 ID 查找，而非依賴 DOM 順序，解決標籤錯位問題
+    const setLabel = (inputId, text) => {
+      const input = document.getElementById(inputId);
+      if (input) {
+        // 尋找該 input 所在的容器 (.control-label) 中的第一個 span
+        const container = input.closest('.control-label') || input.parentElement;
+        const labelSpan = container ? container.querySelector('span') : null;
+        if (labelSpan) labelSpan.textContent = text;
+      }
+    };
+
+    setLabel('area', t.coilArea);
+    setLabel('turns', t.numberOfTurns);
+    setLabel('field', t.magneticFieldB);
+    setLabel('res', t.resistance);
+    setLabel('velocity', t.velocity);
+    setLabel('externalForce', t.externalForce);
 
     
     const autoMotionBtnText = document.getElementById('autoMotion');

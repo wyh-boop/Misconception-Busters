@@ -141,10 +141,20 @@
               <div class="stat-label">Current</div>
               <div class="stat-value" id="I">0.0000 <span class="stat-unit">A</span></div>
             </div>
-            <div class="stat-card">
-              <div class="stat-label">Force</div>
+            <div class="stat-card" id="lenzForceCard">
+              <div class="stat-label">Force </div>
               <div class="stat-value" id="F">0.000 <span class="stat-unit">N</span></div>
             </div>
+            <!-- 修改開始：加入 ID 以便 JS 控制 -->
+            <div class="stat-card" id="extForceCard">
+              <div class="stat-label">External Force</div>
+              <div class="stat-value" id="extForceDisplay">0.000 <span class="stat-unit">N</span></div>
+            </div>
+            <div class="stat-card" id="netForceCard">
+              <div class="stat-label">Net Force</div>
+              <div class="stat-value" id="netForceDisplay">0.000 <span class="stat-unit">N</span></div>
+            </div>
+            <!-- 修改結束 -->
             <div class="stat-card" id="emfTopCard" style="display: none;">
               <div class="stat-label">EMF (Top)</div>
               <div class="stat-value" id="emfTop">0.000 <span class="stat-unit">V</span></div>
