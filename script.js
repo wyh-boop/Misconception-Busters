@@ -107,7 +107,10 @@
       graphYAxis: 'Force (N)',
       motionSlowing: '🔴 Slowing down (F_Lenz > F_external)',
       motionConstant: '🟡 Constant velocity (F_Lenz ≈ F_external)',
-      motionAccelerating: '🟢 Accelerating (F_external > F_Lenz)'
+      motionConstantZero: '🟡 Constant velocity (F_Lenz = F_external = 0)', // NEW
+      motionAccelerating: '🟢 Accelerating (F_external > F_Lenz)',
+      motionAcceleratingSimple: '🟢 Accelerating (F_external > 0)' // NEW
+
     },
     zh: {
       physicsPrinciple: '<strong>📚 關鍵物理原理：</strong><br><strong>法拉第定律：</strong>磁通量的變化產生<strong>感應電動勢 (EMF)</strong>。只有在電路閉合時，此電動勢才會驅動<strong>感應電流</strong>。<br><strong>楞次定律：</strong>此<strong>感應電流</strong>與磁場相互作用產生物理上的<strong>磁力</strong>。這個力總是<strong>抵抗運動方向</strong>（若無電流 → 則無磁力）。',
@@ -153,7 +156,9 @@
       graphYAxis: '力（牛頓）',
       motionSlowing: '🔴 減速中 (F_楞次 > F_外部)',
       motionConstant: '🟡 勻速 (F_楞次 ≈ F_外部)',
-      motionAccelerating: '🟢 加速中 (F_外部 > F_楞次)'
+      motionConstantZero: '🟡 等速運動 (F_楞次 = F_外部 = 0)', // NEW
+      motionAccelerating: '🟢 加速中 (F_外部 > F_楞次)',
+      motionAcceleratingSimple: '🟢 加速中 (F_外部 > 0)' // NEW
     }
   };
   
@@ -387,25 +392,67 @@
 
   function updateStatusMessage(physics) {
     const t = translations[currentLang] || translations.en;
+    
+    // 1. 獲取力的大小
+    const extF = parseFloat(document.getElementById('externalForce').value);
+    const lenzF = physics.lenzForce; 
+    const netF = extF - lenzF;       
+    
+    // 2. 計算運動狀態描述
+    let motionStatus = '';
+    
+    // 定義一個極小的閾值來判斷是否為 0
+    const zeroThreshold = 0.01;
 
-    // --- 1. 導體模式 (Conductor Mode) ---
+    if (physics.state === 'inside' || physics.state === 'outside') {
+      // --- 非感應區域 (沒有 Lenz 力) ---
+      if (extF < zeroThreshold) {
+        // 使用翻譯變數
+        motionStatus = t.motionConstantZero; 
+      } else {
+        // 使用翻譯變數
+        motionStatus = t.motionAcceleratingSimple;
+      }
+    } else {
+      // --- 感應區域 (有 Lenz 力) ---
+      
+      // A. 首先檢查外力是否為 0
+      if (extF < zeroThreshold) {
+          // 只要處於感應狀態且外力為0，必定減速
+          motionStatus = t.motionSlowing;
+      }
+      // B. 如果外力存在，才去比較兩者大小
+      else if (Math.abs(netF) < 0.1) {
+         motionStatus = t.motionConstant; // 平衡
+      } else if (netF > 0) {
+         motionStatus = t.motionAccelerating; // 加速
+      } else {
+         motionStatus = t.motionSlowing; // 減速
+      }
+    }
+
+    // --- Conductor Mode (導體模式) ---
     if (mode === 'conductor') {
       let msg = '';
       if (physics.state === 'outside') {
-        msg = '⏸ Conductor is completely outside field: NO flux change → <strong>NO induced emf</strong>';
+        msg = t.statusOutside.replace('{object}', t.conductor);
       } else if (physics.state === 'entering') {
-        msg = '⚡ Conductor ENTERING field: Flux increasing → <strong>Induced emf</strong>';
+        msg = t.statusEntering.replace('{object}', t.conductor);
       } else if (physics.state === 'inside') {
-        msg = '✓ Conductor completely inside uniform field: Φ constant → <strong>NO MORE extra induced emf</strong>, but the original induced emf will keep the upper side of the rod is still positively charged and the lower side of the rod is still negatively charged.';
+        msg = t.statusInside.replace('{object}', t.conductor);
       } else if (physics.state === 'exiting') {
-        msg = '⚡ Conductor EXITING field: Flux decreasing → <strong>Induced emf</strong>';
+        msg = t.statusExiting.replace('{object}', t.conductor);
       }
-      statusEl.innerHTML = msg;
+      // 注意：這裡 Conductor 的文字也要確保用到 t.status...
+      // 如果原本是用英文寫死的 if/else，請確保上面這段改用了 t.status...
+      // (上面的程式碼已經幫你改成自動使用翻譯了)
+      
+      statusEl.innerHTML = msg + '<br>' + motionStatus;
       statusEl.className = 'status-box';
       return; 
     }
 
-    // --- 2. 線圈模式 (Coil Mode) ---
+    // --- Coil Mode (線圈模式) ---
     const objectName = t.coil;
     const messages = {
       'outside': t.statusOutside.replace('{object}', objectName),
@@ -413,28 +460,16 @@
       'entering': t.statusEntering.replace('{object}', objectName),
       'exiting': t.statusExiting.replace('{object}', objectName)
     };
+
+    let baseMessage = messages[physics.state] || '';
     
-    statusEl.innerHTML = messages[physics.state] || '';
+    statusEl.innerHTML = baseMessage + '<br>' + motionStatus;
     
-    // --- 關鍵修改：只有當不在 'outside' 狀態時，才檢查力平衡 ---
-    if (physics.state !== 'outside') {
-        let motionStatus = '';
-        const tolerance = 0.1; 
-        
-        if (physics.lenzForce > physics.externalForce + tolerance && currentVelocity > 0) {
-          motionStatus = t.motionSlowing;
-        } else if (Math.abs(physics.lenzForce - physics.externalForce) <= tolerance && currentVelocity > 0.01) {
-          motionStatus = t.motionConstant;
-        } else if (physics.externalForce > physics.lenzForce + tolerance) {
-          motionStatus = t.motionAccelerating;
-        }
-        
-        if (motionStatus) {
-          statusEl.innerHTML += '<br>' + motionStatus;
-        }
+    if (physics.state === 'entering' || physics.state === 'exiting') {
+      statusEl.className = 'status-box active';
+    } else {
+      statusEl.className = 'status-box';
     }
-    
-    statusEl.className = (physics.lenzForce > 0.001) ? 'status-box active' : 'status-box';
   }
 
   function updateDisplays() {
@@ -1158,13 +1193,9 @@
         emfBottom = 0;
     }
     
-    // NEW: Detailed charge display condition  
-    const shouldShowCharges =   
-        Math.abs(currentVelocity) > 0.01 && // Velocity is significant  
-         (conductorLeft > fieldX_end && conductorRight > fieldX_end || // Outside field (Right side)  
-         (conductorLeft < fieldX && conductorRight > fieldX) || // Entering field  
-         (conductorLeft >= fieldX && conductorRight <= fieldX_end) || // Inside field  
-         (conductorLeft < fieldX_end && conductorRight > fieldX_end)); // Exiting field  
+    // --- 修正後的邏輯 ---
+    // 只有當速度大於 0 且 不在磁場外 (即 Entering, Inside, Exiting) 時才顯示電荷
+    const shouldShowCharges = Math.abs(currentVelocity) > 0.01 && fluxState.state !== 'outside';
     
     if (shouldShowCharges) {  
         ctx.fillStyle = '#ef4444';  
