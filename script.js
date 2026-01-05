@@ -98,6 +98,12 @@
       statusInside: '✓ {object} <strong>completely inside</strong> uniform field: <strong>Φ constant → NO force</strong>',
       statusEntering: '⚡ {object} <strong>ENTERING</strong> field: <strong>Flux increasing → Force opposes motion</strong>',
       statusExiting: '⚡ {object} <strong>EXITING</strong> field: <strong>Flux decreasing → Force opposes motion</strong>',
+       // NEW: Conductor specific statuses
+      conductorStatusOutside: '⏸ Conductor is completely outside field: NO flux change → <strong>NO induced emf</strong>',
+      conductorStatusEntering: '⚡ Conductor ENTERING field: Flux increasing → <strong>Induced emf</strong>',
+      // 使用你要求的詳細解釋
+      conductorStatusInside: '✓ Conductor completely inside uniform field: Φ constant → <strong>NO MORE extra induced emf</strong>, but the original induced emf will keep the upper side of the rod positively charged and the lower side negatively charged.',
+      conductorStatusExiting: '⚡ Conductor EXITING field: Flux decreasing → <strong>Induced emf</strong>',
       coil: 'Coil',
       conductor: 'Conductor',
       magneticFieldLabel: 'MAGNETIC FIELD (into page)',
@@ -147,6 +153,10 @@
       statusInside: '✓ {object} <strong>完全在均勻磁場內</strong>：<strong>Φ 恆定 → 無力</strong>',
       statusEntering: '⚡ {object} <strong>進入</strong>磁場：<strong>磁通量增加 → 力與運動方向相反</strong>',
       statusExiting: '⚡ {object} <strong>離開</strong>磁場：<strong>磁通量減少 → 力與運動方向相反</strong>',
+      conductorStatusOutside: '⏸ 導體完全在磁場外：無磁通量變化 → <strong>無感應電動勢</strong>',
+      conductorStatusEntering: '⚡ 導體進入磁場：磁通量增加 → <strong>產生感應電動勢</strong>',
+      conductorStatusInside: '✓ 導體完全在均勻磁場內：Φ 恆定 → <strong>無額外感應電動勢</strong>，但電荷分離使導體上端保持帶正電，下端保持帶負電。',
+      conductorStatusExiting: '⚡ 導體離開磁場：磁通量減少 → <strong>產生感應電動勢</strong>',
       coil: '線圈',
       conductor: '導體',
       magneticFieldLabel: '磁場（指入頁面）',
@@ -390,69 +400,62 @@
     };
   }
 
-  function updateStatusMessage(physics) {
+   function updateStatusMessage(physics) {
     const t = translations[currentLang] || translations.en;
     
-    // 1. 獲取力的大小
+    // 1. 計算運動狀態描述 (這部分主要給線圈模式用)
     const extF = parseFloat(document.getElementById('externalForce').value);
     const lenzF = physics.lenzForce; 
     const netF = extF - lenzF;       
-    
-    // 2. 計算運動狀態描述
     let motionStatus = '';
-    
-    // 定義一個極小的閾值來判斷是否為 0
     const zeroThreshold = 0.01;
 
+    // 計算 motionStatus 的邏輯保持不變 (為了線圈模式)
     if (physics.state === 'inside' || physics.state === 'outside') {
-      // --- 非感應區域 (沒有 Lenz 力) ---
       if (extF < zeroThreshold) {
-        // 使用翻譯變數
         motionStatus = t.motionConstantZero; 
       } else {
-        // 使用翻譯變數
         motionStatus = t.motionAcceleratingSimple;
       }
     } else {
-      // --- 感應區域 (有 Lenz 力) ---
-      
-      // A. 首先檢查外力是否為 0
       if (extF < zeroThreshold) {
-          // 只要處於感應狀態且外力為0，必定減速
           motionStatus = t.motionSlowing;
-      }
-      // B. 如果外力存在，才去比較兩者大小
-      else if (Math.abs(netF) < 0.1) {
-         motionStatus = t.motionConstant; // 平衡
+      } else if (Math.abs(netF) < 0.1) {
+         motionStatus = t.motionConstant;
       } else if (netF > 0) {
-         motionStatus = t.motionAccelerating; // 加速
+         motionStatus = t.motionAccelerating;
       } else {
-         motionStatus = t.motionSlowing; // 減速
+         motionStatus = t.motionSlowing;
       }
     }
 
     // --- Conductor Mode (導體模式) ---
+    // 這裡進行了大幅修改，改用專屬翻譯，並且不再顯示 motionStatus
     if (mode === 'conductor') {
       let msg = '';
       if (physics.state === 'outside') {
-        msg = t.statusOutside.replace('{object}', t.conductor);
+        msg = t.conductorStatusOutside;
       } else if (physics.state === 'entering') {
-        msg = t.statusEntering.replace('{object}', t.conductor);
+        msg = t.conductorStatusEntering;
       } else if (physics.state === 'inside') {
-        msg = t.statusInside.replace('{object}', t.conductor);
+        msg = t.conductorStatusInside;
       } else if (physics.state === 'exiting') {
-        msg = t.statusExiting.replace('{object}', t.conductor);
+        msg = t.conductorStatusExiting;
       }
-      // 注意：這裡 Conductor 的文字也要確保用到 t.status...
-      // 如果原本是用英文寫死的 if/else，請確保上面這段改用了 t.status...
-      // (上面的程式碼已經幫你改成自動使用翻譯了)
       
-      statusEl.innerHTML = msg + '<br>' + motionStatus;
-      statusEl.className = 'status-box';
+      // 注意：這裡只顯示 msg，不再加上 motionStatus
+      statusEl.innerHTML = msg;
+      
+      // 根據狀態設定樣式 (進入/離開時高亮)
+      if (physics.state === 'entering' || physics.state === 'exiting') {
+        statusEl.className = 'status-box active';
+      } else {
+        statusEl.className = 'status-box';
+      }
       return; 
     }
 
-    // --- Coil Mode (線圈模式) ---
+    // --- Coil Mode (線圈模式 - 保持不變) ---
     const objectName = t.coil;
     const messages = {
       'outside': t.statusOutside.replace('{object}', objectName),
@@ -479,7 +482,6 @@
     console.log('currentVelocity:', currentVelocity, 'I:', p.I);
     
     const stateChanged = !lastPhysicsState ||
-
       Math.abs(p.dPhiDt - lastPhysicsState.dPhiDt) > 0.001 ||
       Math.abs(p.lenzForce - lastPhysicsState.lenzForce) > 0.001 ||
       Math.abs(p.externalForce - lastPhysicsState.externalForce) > 0.001 ||
@@ -487,7 +489,19 @@
 
     if (stateChanged) {
       fluxRateEl.innerHTML = p.dPhiDt.toFixed(3) + '<span class="stat-unit"> Wb/s</span>';
-      emfEl.innerHTML = p.emf.toFixed(3) + '<span class="stat-unit"> V</span>';
+      
+      // --- CHANGED START --- 
+      // Determine which value to show based on mode
+      let displayEmf = p.emf;
+      if (mode === 'conductor') {
+          // For conductor, show magnitude only (positive), 
+          // because the +/- is already handled by the Top/Bottom values
+          displayEmf = Math.abs(p.emf); 
+      }
+      
+      emfEl.innerHTML = displayEmf.toFixed(3) + '<span class="stat-unit"> V</span>';
+      // --- CHANGED END ---
+
       IEl.innerHTML = p.I.toFixed(4) + '<span class="stat-unit"> A</span>';
       FEl.innerHTML = p.lenzForce.toFixed(3) + '<span class="stat-unit"> N</span>';
       externalForceEl.innerHTML = p.externalForce.toFixed(3) + '<span class="stat-unit"> N</span>';
@@ -1169,25 +1183,28 @@
     const conductorRight = coilX + conductorWidth / 2;
     const externalForce = parseFloat(externalForceSlider.value);
     
-    // CORRECTED: EMF calculation only at boundaries (Faraday's Law)
+    // CORRECTED: EMF calculation using Motional EMF direction (Right-Hand Rule)
     let emfTop = 0;
     let emfBottom = 0;
     
     const fluxState = getFluxState(coilX);
-    
-    // Only calculate EMF when flux is changing (entering or exiting field)
-    // NEW CODE: Link EMF Top/Bottom directly to dPhi/dt (Induced EMF)
-    // 這樣做可以確保它們加起來等於 Induced EMF，或者與 Induced EMF 保持一致
-    
-    // 1. 獲取當前的 Induced EMF 數值 (由 computePhysics 計算出的 dPhiDt)
     const currentPhysics = computePhysics();
-    const totalInducedEmf = currentPhysics.emf; // 這就是 dPhi/dt
 
-    // 2. 將總 Induced EMF 分配給 Top 和 Bottom
-    if (fluxState.state === 'entering' || fluxState.state === 'exiting') {
-        // 因為是中心接地，我們將總電動勢平分顯示
-        emfTop = totalInducedEmf / 2;
-        emfBottom = -1 * totalInducedEmf / 2;
+    // Only show EMF potential difference when conductor is inside or interacting with field
+    if (fluxState.state !== 'outside') {
+        // Use magnitude to avoid confusion with Lenz's law sign convention
+        const totalInducedEmfMagnitude = Math.abs(currentPhysics.emf); 
+        
+        // Right-Hand Rule: v(Right) x B(In) = Force(Up) -> Top is Positive
+        if (currentVelocity > 0) {
+            emfTop = totalInducedEmfMagnitude / 2;
+            emfBottom = -totalInducedEmfMagnitude / 2;
+        } 
+        // If moving Left: v(Left) x B(In) = Force(Down) -> Top is Negative
+        else if (currentVelocity < 0) {
+            emfTop = -totalInducedEmfMagnitude / 2;
+            emfBottom = totalInducedEmfMagnitude / 2;
+        }
     } else {
         emfTop = 0;
         emfBottom = 0;
